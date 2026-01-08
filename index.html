@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DCA Trading Analysis - Log Parser</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         :root {
             --color-bg: #f5f5f5;
@@ -781,7 +782,7 @@
             }
 
             try {
-                const workbook = XLSX.utils.book_new();
+                const wb = XLSX.utils.book_new();
 
                 // 테이블 데이터 추출
                 const table = document.getElementById('resultTable');
@@ -794,55 +795,28 @@
                 const headers = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent);
 
                 // 데이터 준비
-                const data = [headers, ...excelRows];
+                const wsData = [headers, ...excelRows];
 
                 // 워크시트 생성
-                const worksheet = XLSX.utils.aoa_to_sheet(data);
+                const ws = XLSX.utils.aoa_to_sheet(wsData);
 
                 // 열 너비 설정
-                worksheet['!cols'] = [
-                    { wch: 20 }, // 그룹명
+                ws['!cols'] = [
+                    { wch: 20 },
                     ...Array(headers.length - 2).fill({ wch: 12 })
                 ];
 
-                // 스타일 적용 (기본)
-                for (let i = 0; i < data.length; i++) {
-                    for (let j = 0; j < data[i].length; j++) {
-                        const cellRef = XLSX.utils.encode_cell({ r: i, c: j });
-                        if (!worksheet[cellRef]) continue;
-
-                        if (i === 0) {
-                            // 헤더 스타일
-                            worksheet[cellRef].s = {
-                                font: { bold: true, color: { rgb: 'FFFFFF' } },
-                                fill: { fgColor: { rgb: '1976D2' } },
-                                alignment: { horizontal: 'center', vertical: 'center' }
-                            };
-                        } else if (j === 0) {
-                            // 그룹명 스타일
-                            worksheet[cellRef].s = {
-                                font: { bold: true },
-                                fill: { fgColor: { rgb: 'F5F5F5' } },
-                                alignment: { horizontal: 'left' }
-                            };
-                        } else {
-                            worksheet[cellRef].s = {
-                                alignment: { horizontal: 'center' }
-                            };
-                        }
-                    }
-                }
-
                 // 워크시트를 북에 추가
-                XLSX.utils.book_append_sheet(workbook, worksheet, 'DCA Summary');
+                XLSX.utils.book_append_sheet(wb, ws, 'DCA Summary');
 
                 // 파일 다운로드
                 const fileName = `DCA_Analysis_${new Date().toISOString().split('T')[0]}.xlsx`;
-                XLSX.writeFile(workbook, fileName);
+                XLSX.writeFile(wb, fileName);
 
                 showSuccess('Excel 파일이 다운로드되었습니다!');
             } catch (error) {
-                showError('Excel 내보내기 중 오류가 발생했습니다: ' + error.message);
+                console.error('Excel 내보내기 오류:', error);
+                showError('Excel 내보내기 중 오류가 발생했습니다.');
             }
         }
 

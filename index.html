@@ -6,6 +6,7 @@
     <title>DCA Trading Analysis - Log Parser</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
     <style>
         :root {
             --color-bg: #f5f5f5;
@@ -474,8 +475,10 @@
     <script>
         let selectedFiles = [];
         let analysisData = {};
-        let colorMap = {};
+        let currentMaxDCA = 0;
+        let currentGroupMap = {};
 
+        // 파일 업로드 이벤트
         const uploadSection = document.getElementById('uploadSection');
         const fileInput = document.getElementById('fileInput');
         const selectFileBtn = document.getElementById('selectFileBtn');
@@ -562,7 +565,6 @@
         async function analyzeFiles() {
             document.getElementById('loading').style.display = 'block';
             analysisData = {};
-            colorMap = {};
 
             try {
                 for (const file of selectedFiles) {
@@ -609,15 +611,39 @@
             };
         }
 
-        function rgbToHex(rgb) {
-            const match = rgb.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
-            if (match) {
-                const r = parseInt(match[1]).toString(16).padStart(2, '0');
-                const g = parseInt(match[2]).toString(16).padStart(2, '0');
-                const b = parseInt(match[3]).toString(16).padStart(2, '0');
-                return `#${r}${g}${b}`;
+        // 공통 색상 계산 함수 (웹과 엑셀에서 동일하게 사용)
+        function getCommonColor(value, minVal, maxVal) {
+            if (value === 0) return { hex: 'CCCCCC', rgb: 'rgba(200, 200, 200, 0.3)' };
+            if (minVal === maxVal) return { hex: 'EF5350', rgb: '#ef5350' };
+
+            const logMin = Math.log(minVal + 1);
+            const logMax = Math.log(maxVal + 1);
+            const logVal = Math.log(value + 1);
+            const normalizedValue = (logVal - logMin) / (logMax - logMin);
+
+            let r, g, b;
+            if (normalizedValue < 0.3) {
+                const t = normalizedValue / 0.3;
+                r = Math.round(165 + (255 - 165) * t);
+                g = 214;
+                b = Math.round(167 + (79 - 167) * t);
+            } else if (normalizedValue < 0.7) {
+                const t = (normalizedValue - 0.3) / 0.4;
+                r = 255;
+                g = Math.round(214 + (180 - 214) * t);
+                b = Math.round(79 + (0 - 79) * t);
+            } else {
+                const t = (normalizedValue - 0.7) / 0.3;
+                r = 255;
+                g = Math.round(180 + (0 - 180) * t);
+                b = 0;
             }
-            return rgb;
+
+            const toHex = (c) => c.toString(16).padStart(2, '0').toUpperCase();
+            return {
+                hex: `${toHex(r)}${toHex(g)}${toHex(b)}`,
+                rgb: `rgb(${r}, ${g}, ${b})`
+            };
         }
 
         function renderResults() {
@@ -630,15 +656,14 @@
             let maxDCA = 0;
 
             allData.forEach(item => {
-                if (!groupMap[item.group]) {
-                    groupMap[item.group] = {};
-                }
-                if (!groupMap[item.group][item.dca]) {
-                    groupMap[item.group][item.dca] = 0;
-                }
+                if (!groupMap[item.group]) groupMap[item.group] = {};
+                if (!groupMap[item.group][item.dca]) groupMap[item.group][item.dca] = 0;
                 groupMap[item.group][item.dca]++;
                 maxDCA = Math.max(maxDCA, item.dca);
             });
+
+            currentMaxDCA = maxDCA;
+            currentGroupMap = groupMap;
 
             const totalTakeProfit = allData.length;
             const totalGroups = Object.keys(groupMap).length;
@@ -659,88 +684,38 @@
         function generateTable(groupMap, maxDCA) {
             const thead = document.getElementById('tableHead');
             const tbody = document.getElementById('tableBody');
-
             thead.innerHTML = '';
             tbody.innerHTML = '';
 
             const headerRow = document.createElement('tr');
             headerRow.innerHTML = '<th>그룹명</th>';
-
             for (let i = 0; i <= maxDCA; i++) {
                 const th = document.createElement('th');
                 th.textContent = `${i} DCA`;
                 headerRow.appendChild(th);
             }
-
             const thTotal = document.createElement('th');
             thTotal.textContent = 'Total';
             headerRow.appendChild(thTotal);
-
             thead.appendChild(headerRow);
 
             const allValues = [];
             const rows = [];
-
             for (const group in groupMap) {
                 let rowTotal = 0;
                 const rowData = [];
-
                 for (let i = 0; i <= maxDCA; i++) {
                     const value = groupMap[group][i] || 0;
                     rowData.push(value);
                     rowTotal += value;
-                    if (value > 0) {
-                        allValues.push(value);
-                    }
+                    if (value > 0) allValues.push(value);
                 }
-
-                rows.push({
-                    group: group,
-                    data: rowData,
-                    total: rowTotal
-                });
+                rows.push({ group, data: rowData, total: rowTotal });
             }
-
             rows.sort((a, b) => b.total - a.total);
 
             const minVal = Math.min(...allValues);
             const maxVal = Math.max(...allValues);
-
-            const getColor = (value) => {
-                if (value === 0) return 'rgba(200, 200, 200, 0.3)';
-                if (minVal === maxVal) return '#ef5350';
-
-                const logMin = Math.log(minVal + 1);
-                const logMax = Math.log(maxVal + 1);
-                const logVal = Math.log(value + 1);
-
-                const normalizedValue = (logVal - logMin) / (logMax - logMin);
-
-                let color;
-                if (normalizedValue < 0.3) {
-                    const t = normalizedValue / 0.3;
-                    const r = Math.round(165 + (255 - 165) * t);
-                    const g = Math.round(214 + (214 - 214) * t);
-                    const b = Math.round(167 + (79 - 167) * t);
-                    color = `rgb(${r}, ${g}, ${b})`;
-                } else if (normalizedValue < 0.7) {
-                    const t = (normalizedValue - 0.3) / 0.4;
-                    const r = Math.round(255 + (255 - 255) * t);
-                    const g = Math.round(214 + (180 - 214) * t);
-                    const b = Math.round(79 + (0 - 79) * t);
-                    color = `rgb(${r}, ${g}, ${b})`;
-                } else {
-                    const t = (normalizedValue - 0.7) / 0.3;
-                    const r = Math.round(255);
-                    const g = Math.round(180 + (0 - 180) * t);
-                    const b = Math.round(0);
-                    color = `rgb(${r}, ${g}, ${b})`;
-                }
-
-                return color;
-            };
-
-            colorMap = {};
 
             rows.forEach(row => {
                 const tr = document.createElement('tr');
@@ -748,19 +723,13 @@
                 tdGroup.textContent = row.group;
                 tr.appendChild(tdGroup);
 
-                row.data.forEach((value, index) => {
+                row.data.forEach(value => {
                     const td = document.createElement('td');
                     if (value > 0) {
+                        const color = getCommonColor(value, minVal, maxVal);
                         td.classList.add('color-cell');
-                        const bgColor = getColor(value);
-                        td.style.backgroundColor = bgColor;
+                        td.style.backgroundColor = color.rgb;
                         td.textContent = value;
-                        
-                        const key = `${row.group}-${index}`;
-                        colorMap[key] = {
-                            value: value,
-                            color: bgColor
-                        };
                     } else {
                         td.textContent = '-';
                         td.style.color = '#ccc';
@@ -773,148 +742,116 @@
                 tdTotal.style.backgroundColor = '#f0f0f0';
                 tdTotal.textContent = row.total;
                 tr.appendChild(tdTotal);
-
                 tbody.appendChild(tr);
             });
         }
 
-        function exportToExcel() {
-            if (Object.keys(analysisData).length === 0) {
+        async function exportToExcel() {
+            if (Object.keys(currentGroupMap).length === 0) {
                 showError('내보낼 데이터가 없습니다.');
                 return;
             }
 
             try {
-                const wb = XLSX.utils.book_new();
-                const ws = XLSX.utils.aoa_to_sheet([]);
+                const workbook = new ExcelJS.Workbook();
+                const worksheet = workbook.addWorksheet('DCA Summary');
 
-                const table = document.getElementById('resultTable');
-                const headers = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent);
-                const excelRows = Array.from(table.querySelectorAll('tbody tr'));
+                // 헤더 구성
+                const headers = ['그룹명'];
+                for (let i = 0; i <= currentMaxDCA; i++) {
+                    headers.push(`${i} DCA`);
+                }
+                headers.push('Total');
 
-                ws['!rows'] = [];
-                const headerRowNum = 0;
-                ws['!rows'][headerRowNum] = { hpx: 25 };
-
-                headers.forEach((header, colIndex) => {
-                    const cell = XLSX.utils.encode_cell({ r: 0, c: colIndex });
-                    ws[cell] = {
-                        v: header,
-                        s: {
-                            font: { bold: true, color: { rgb: 'FFFFFF' } },
-                            fill: { fgColor: { rgb: '1F3A52' } },
-                            alignment: { horizontal: 'center', vertical: 'center' },
-                            border: {
-                                left: { style: 'thin', color: { rgb: '000000' } },
-                                right: { style: 'thin', color: { rgb: '000000' } },
-                                top: { style: 'thin', color: { rgb: '000000' } },
-                                bottom: { style: 'thin', color: { rgb: '000000' } }
-                            }
-                        }
+                // 헤더 추가 및 스타일링
+                const headerRow = worksheet.addRow(headers);
+                headerRow.eachCell((cell) => {
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
+                    cell.font = { bold: true, size: 11 };
+                    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+                    cell.border = {
+                        top: { style: 'thin' }, left: { style: 'thin' },
+                        bottom: { style: 'thin' }, right: { style: 'thin' }
                     };
                 });
 
-                excelRows.forEach((tr, rowIndex) => {
-                    const cells = Array.from(tr.querySelectorAll('td'));
-                    ws['!rows'] = ws['!rows'] || [];
-                    ws['!rows'][rowIndex + 1] = { hpx: 20 };
+                // 데이터 정렬 및 준비
+                const allValues = [];
+                const rows = [];
+                for (const group in currentGroupMap) {
+                    let rowTotal = 0;
+                    const rowData = [];
+                    for (let i = 0; i <= currentMaxDCA; i++) {
+                        const value = currentGroupMap[group][i] || 0;
+                        rowData.push(value);
+                        rowTotal += value;
+                        if (value > 0) allValues.push(value);
+                    }
+                    rows.push({ group, data: rowData, total: rowTotal });
+                }
+                rows.sort((a, b) => b.total - a.total);
 
-                    cells.forEach((cell, colIndex) => {
-                        const cellValue = cell.textContent;
-                        const excelCell = XLSX.utils.encode_cell({ r: rowIndex + 1, c: colIndex });
-                        
-                        if (colIndex === 0) {
-                            ws[excelCell] = {
-                                v: cellValue,
-                                s: {
-                                    font: { bold: true, size: 11, color: { rgb: '1F3A52' } },
-                                    fill: { fgColor: { rgb: 'E8E8E8' } },
-                                    alignment: { horizontal: 'left', vertical: 'center' },
-                                    border: {
-                                        left: { style: 'thin', color: { rgb: 'CCCCCC' } },
-                                        right: { style: 'thin', color: { rgb: 'CCCCCC' } },
-                                        top: { style: 'thin', color: { rgb: 'CCCCCC' } },
-                                        bottom: { style: 'thin', color: { rgb: 'CCCCCC' } }
-                                    }
-                                }
-                            };
-                        } else if (colIndex === cells.length - 1) {
-                            ws[excelCell] = {
-                                v: cellValue,
-                                s: {
-                                    font: { bold: true, size: 11, color: { rgb: '000000' } },
-                                    fill: { fgColor: { rgb: 'F0F0F0' } },
-                                    alignment: { horizontal: 'center', vertical: 'center' },
-                                    border: {
-                                        left: { style: 'thin', color: { rgb: 'CCCCCC' } },
-                                        right: { style: 'thin', color: { rgb: 'CCCCCC' } },
-                                        top: { style: 'thin', color: { rgb: 'CCCCCC' } },
-                                        bottom: { style: 'thin', color: { rgb: 'CCCCCC' } }
-                                    }
-                                }
-                            };
-                        } else {
-                            if (cellValue === '-') {
-                                ws[excelCell] = {
-                                    v: cellValue,
-                                    s: {
-                                        font: { color: { rgb: 'CCCCCC' } },
-                                        alignment: { horizontal: 'center', vertical: 'center' },
-                                        border: {
-                                            left: { style: 'thin', color: { rgb: 'E0E0E0' } },
-                                            right: { style: 'thin', color: { rgb: 'E0E0E0' } },
-                                            top: { style: 'thin', color: { rgb: 'E0E0E0' } },
-                                            bottom: { style: 'thin', color: { rgb: 'E0E0E0' } }
-                                        }
-                                    }
-                                };
+                const minVal = Math.min(...allValues);
+                const maxVal = Math.max(...allValues);
+
+                // 데이터 행 추가
+                rows.forEach(rowData => {
+                    const rowValues = [rowData.group, ...rowData.data, rowData.total];
+                    const row = worksheet.addRow(rowValues);
+
+                    // 셀별 스타일링
+                    row.eachCell((cell, colNumber) => {
+                        cell.border = {
+                            top: { style: 'thin' }, left: { style: 'thin' },
+                            bottom: { style: 'thin' }, right: { style: 'thin' }
+                        };
+                        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+
+                        // 1. 그룹명 컬럼 강조
+                        if (colNumber === 1) {
+                            cell.font = { bold: true };
+                            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9F9F9' } };
+                            cell.alignment = { vertical: 'middle', horizontal: 'left' };
+                        } 
+                        // 2. 익절 횟수 컬럼 색상 적용 (웹과 동일)
+                        else if (colNumber > 1 && colNumber <= headers.length - 1) {
+                            const val = cell.value;
+                            if (val > 0) {
+                                const color = getCommonColor(val, minVal, maxVal);
+                                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + color.hex } };
+                                cell.font = { color: { argb: 'FFFFFFFF' }, bold: true };
                             } else {
-                                const groupName = cells[0].textContent;
-                                const dcaIndex = colIndex - 1;
-                                const key = `${groupName}-${dcaIndex}`;
-                                
-                                let bgColor = 'FFFFFF';
-                                let fontColor = '000000';
-
-                                if (colorMap[key]) {
-                                    const rgbColor = colorMap[key].color;
-                                    bgColor = rgbToHex(rgbColor).substring(1);
-                                    fontColor = 'FFFFFF';
-                                }
-
-                                ws[excelCell] = {
-                                    v: cellValue,
-                                    s: {
-                                        font: { bold: true, color: { rgb: fontColor } },
-                                        fill: { fgColor: { rgb: bgColor } },
-                                        alignment: { horizontal: 'center', vertical: 'center' },
-                                        border: {
-                                            left: { style: 'thin', color: { rgb: 'CCCCCC' } },
-                                            right: { style: 'thin', color: { rgb: 'CCCCCC' } },
-                                            top: { style: 'thin', color: { rgb: 'CCCCCC' } },
-                                            bottom: { style: 'thin', color: { rgb: 'CCCCCC' } }
-                                        }
-                                    }
-                                };
+                                cell.value = '-';
+                                cell.font = { color: { argb: 'FFCCCCCC' } };
                             }
+                        }
+                        // 3. Total 컬럼 강조
+                        else if (colNumber === headers.length) {
+                            cell.font = { bold: true };
+                            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0F0' } };
                         }
                     });
                 });
 
-                ws['!cols'] = [
-                    { wch: 20 },
-                    ...Array(headers.length - 2).fill({ wch: 12 })
-                ];
-
-                ws['!ref'] = XLSX.utils.encode_range({
-                    s: { r: 0, c: 0 },
-                    e: { r: excelRows.length, c: headers.length - 1 }
+                // 열 너비 자동 조절
+                worksheet.columns.forEach((column, i) => {
+                    let maxLength = 0;
+                    column.eachCell({ includeEmpty: true }, (cell) => {
+                        const columnLength = cell.value ? cell.value.toString().length : 10;
+                        if (columnLength > maxLength) maxLength = columnLength;
+                    });
+                    column.width = maxLength < 10 ? 10 : maxLength + 2;
                 });
 
-                XLSX.utils.book_append_sheet(wb, ws, 'DCA Summary');
-
-                const fileName = `DCA_Analysis_${new Date().toISOString().split('T')[0]}.xlsx`;
-                XLSX.writeFile(wb, fileName);
+                // 파일 저장
+                const buffer = await workbook.xlsx.writeBuffer();
+                const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const url = window.URL.createObjectURL(blob);
+                const anchor = document.createElement('a');
+                anchor.href = url;
+                anchor.download = `DCA_Analysis_${new Date().toISOString().split('T')[0]}.xlsx`;
+                anchor.click();
+                window.URL.revokeObjectURL(url);
 
                 showSuccess('Excel 파일이 다운로드되었습니다!');
             } catch (error) {

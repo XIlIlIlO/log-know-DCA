@@ -397,7 +397,7 @@
             <div class="upload-icon">📁</div>
             <div class="upload-text">여기에 파일을 드래그하거나 클릭하여 업로드</div>
             <div class="upload-hint">지원 형식: .log, .txt (여러 파일 동시 업로드 가능)</div>
-            <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+            <button class="btn btn-primary" id="selectFileBtn">
                 파일 선택
             </button>
             <input type="file" id="fileInput" multiple accept=".log,.txt">
@@ -419,7 +419,7 @@
         <div class="results-section" id="resultsSection">
             <div class="results-header">
                 <div class="results-title">분석 결과</div>
-                <button class="btn btn-secondary" onclick="exportToExcel()">
+                <button class="btn btn-secondary" id="exportBtn">
                     📥 Excel로 다운로드
                 </button>
             </div>
@@ -477,8 +477,9 @@
         // 파일 업로드 이벤트
         const uploadSection = document.getElementById('uploadSection');
         const fileInput = document.getElementById('fileInput');
+        const selectFileBtn = document.getElementById('selectFileBtn');
 
-        uploadSection.addEventListener('click', () => fileInput.click());
+        selectFileBtn.addEventListener('click', () => fileInput.click());
 
         uploadSection.addEventListener('dragover', (e) => {
             e.preventDefault();
@@ -784,7 +785,7 @@
 
                 // 테이블 데이터 추출
                 const table = document.getElementById('resultTable');
-                const rows = Array.from(table.querySelectorAll('tbody tr')).map(tr => {
+                const excelRows = Array.from(table.querySelectorAll('tbody tr')).map(tr => {
                     const cells = Array.from(tr.querySelectorAll('td'));
                     return cells.map(cell => cell.textContent);
                 });
@@ -793,7 +794,7 @@
                 const headers = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent);
 
                 // 데이터 준비
-                const data = [headers, ...rows];
+                const data = [headers, ...excelRows];
 
                 // 워크시트 생성
                 const worksheet = XLSX.utils.aoa_to_sheet(data);
@@ -844,6 +845,8 @@
                 showError('Excel 내보내기 중 오류가 발생했습니다: ' + error.message);
             }
         }
+
+        document.getElementById('exportBtn').addEventListener('click', exportToExcel);
     </script>
 </body>
 </html>

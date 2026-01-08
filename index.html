@@ -474,6 +474,7 @@
     <script>
         let selectedFiles = [];
         let analysisData = {};
+        let colorMap = {}; // 색상 정보 저장용
 
         // 파일 업로드 이벤트
         const uploadSection = document.getElementById('uploadSection');
@@ -586,9 +587,6 @@
         }
 
         function parseLogFile(content) {
-            // PROFIT 패턴: □ PROFIT [...]... USDT
-            // - GROUP : {group}-
-            // - DCA : {dca}/
             const pattern = /□\s+PROFIT\s+\[.*?\]\s+.*?\s+USDT\s*\n\s*\n-\s*GROUP\s*:\s*(.*?)-\s*\n-\s*DCA\s*:\s*(\d+)\//gm;
 
             const matches = [];
@@ -658,6 +656,7 @@
 
             thead.innerHTML = '';
             tbody.innerHTML = '';
+            colorMap = {}; // 색상 정보 초기화
 
             // 헤더 생성
             const headerRow = document.createElement('tr');
@@ -707,42 +706,42 @@
             const maxVal = Math.max(...allValues);
 
             const getColor = (value) => {
-                if (value === 0) return 'rgba(200, 200, 200, 0.3)'; // 회색 (0값)
-                if (minVal === maxVal) return '#ef5350'; // 값이 모두 같을 경우
+                if (value === 0) return { rgb: 'rgba(200, 200, 200, 0.3)', hex: 'C8C8C8' };
+                if (minVal === maxVal) return { rgb: '#ef5350', hex: 'EF5350' };
 
                 // 로그함수 스케일링
                 const logMin = Math.log(minVal + 1);
                 const logMax = Math.log(maxVal + 1);
                 const logVal = Math.log(value + 1);
 
-                const normalizedValue = (logVal - logMin) / (logMax - logMin); // 0 ~ 1
+                const normalizedValue = (logVal - logMin) / (logMax - logMin);
 
-                // 색상 그래디언트 (연두색 → 노랑 → 주황 → 빨강)
                 let color;
+                let hexColor;
                 if (normalizedValue < 0.3) {
-                    // 연두색 ~ 노랑
                     const t = normalizedValue / 0.3;
                     const r = Math.round(165 + (255 - 165) * t);
                     const g = Math.round(214 + (214 - 214) * t);
                     const b = Math.round(167 + (79 - 167) * t);
                     color = `rgb(${r}, ${g}, ${b})`;
+                    hexColor = ('0' + r.toString(16)).slice(-2) + ('0' + g.toString(16)).slice(-2) + ('0' + b.toString(16)).slice(-2);
                 } else if (normalizedValue < 0.7) {
-                    // 노랑 ~ 주황
                     const t = (normalizedValue - 0.3) / 0.4;
                     const r = Math.round(255 + (255 - 255) * t);
                     const g = Math.round(214 + (180 - 214) * t);
                     const b = Math.round(79 + (0 - 79) * t);
                     color = `rgb(${r}, ${g}, ${b})`;
+                    hexColor = ('0' + r.toString(16)).slice(-2) + ('0' + g.toString(16)).slice(-2) + ('0' + b.toString(16)).slice(-2);
                 } else {
-                    // 주황 ~ 빨강
                     const t = (normalizedValue - 0.7) / 0.3;
                     const r = Math.round(255);
                     const g = Math.round(180 + (0 - 180) * t);
                     const b = Math.round(0);
                     color = `rgb(${r}, ${g}, ${b})`;
+                    hexColor = ('0' + r.toString(16)).slice(-2) + ('0' + g.toString(16)).slice(-2) + ('0' + b.toString(16)).slice(-2);
                 }
 
-                return color;
+                return { rgb: color, hex: hexColor };
             };
 
             // 바디 생성
@@ -756,8 +755,11 @@
                     const td = document.createElement('td');
                     if (value > 0) {
                         td.classList.add('color-cell');
-                        td.style.backgroundColor = getColor(value);
+                        const colorObj = getColor(value);
+                        td.style.backgroundColor = colorObj.rgb;
                         td.textContent = value;
+                        // 색상 정보 저장
+                        colorMap[`${row.group}_${value}`] = colorObj.hex;
                     } else {
                         td.textContent = '-';
                         td.style.color = '#ccc';
@@ -775,6 +777,13 @@
             });
         }
 
+        function getRGBFromHex(hex) {
+            const r = parseInt(hex.substr(0, 2), 16);
+            const g = parseInt(hex.substr(2, 2), 16);
+            const b = parseInt(hex.substr(4, 2), 16);
+            return { r, g, b };
+        }
+
         function exportToExcel() {
             if (Object.keys(analysisData).length === 0) {
                 showError('내보낼 데이터가 없습니다.');
@@ -786,13 +795,11 @@
 
                 // 테이블 데이터 추출
                 const table = document.getElementById('resultTable');
+                const headers = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent);
                 const excelRows = Array.from(table.querySelectorAll('tbody tr')).map(tr => {
                     const cells = Array.from(tr.querySelectorAll('td'));
                     return cells.map(cell => cell.textContent);
                 });
-
-                // 헤더 추출
-                const headers = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent);
 
                 // 데이터 준비
                 const wsData = [headers, ...excelRows];
@@ -805,6 +812,103 @@
                     { wch: 20 },
                     ...Array(headers.length - 2).fill({ wch: 12 })
                 ];
+
+                // 헤더 스타일 (파란색 배경, 흰색 글씨, 굵음)
+                for (let j = 0; j < headers.length; j++) {
+                    const cellRef = XLSX.utils.encode_cell({ r: 0, c: j });
+                    ws[cellRef].s = {
+                        font: { bold: true, color: { rgb: 'FFFFFF' }, size: 12 },
+                        fill: { fgColor: { rgb: '1976D2' } },
+                        alignment: { horizontal: 'center', vertical: 'center' },
+                        border: {
+                            top: { style: 'thin', color: { rgb: '000000' } },
+                            bottom: { style: 'thin', color: { rgb: '000000' } },
+                            left: { style: 'thin', color: { rgb: '000000' } },
+                            right: { style: 'thin', color: { rgb: '000000' } }
+                        }
+                    };
+                }
+
+                // 데이터 셀 스타일
+                for (let i = 1; i < wsData.length; i++) {
+                    for (let j = 0; j < wsData[i].length; j++) {
+                        const cellRef = XLSX.utils.encode_cell({ r: i, c: j });
+                        const cellValue = wsData[i][j];
+
+                        if (j === 0) {
+                            // 그룹명 스타일 (회색 배경, 굵음)
+                            ws[cellRef].s = {
+                                font: { bold: true, color: { rgb: '000000' }, size: 11 },
+                                fill: { fgColor: { rgb: 'E8E8E8' } },
+                                alignment: { horizontal: 'left', vertical: 'center' },
+                                border: {
+                                    top: { style: 'thin', color: { rgb: '000000' } },
+                                    bottom: { style: 'thin', color: { rgb: '000000' } },
+                                    left: { style: 'thin', color: { rgb: '000000' } },
+                                    right: { style: 'thin', color: { rgb: '000000' } }
+                                }
+                            };
+                        } else if (j === wsData[i].length - 1) {
+                            // Total 열 (밝은 회색 배경, 굵음)
+                            ws[cellRef].s = {
+                                font: { bold: true, color: { rgb: '000000' }, size: 11 },
+                                fill: { fgColor: { rgb: 'F0F0F0' } },
+                                alignment: { horizontal: 'center', vertical: 'center' },
+                                border: {
+                                    top: { style: 'thin', color: { rgb: '000000' } },
+                                    bottom: { style: 'thin', color: { rgb: '000000' } },
+                                    left: { style: 'thin', color: { rgb: '000000' } },
+                                    right: { style: 'thin', color: { rgb: '000000' } }
+                                }
+                            };
+                        } else {
+                            // 익절 횟수 셀
+                            if (cellValue === '-') {
+                                // 0값 (회색)
+                                ws[cellRef].s = {
+                                    font: { color: { rgb: 'CCCCCC' }, size: 11 },
+                                    alignment: { horizontal: 'center', vertical: 'center' },
+                                    border: {
+                                        top: { style: 'thin', color: { rgb: '000000' } },
+                                        bottom: { style: 'thin', color: { rgb: '000000' } },
+                                        left: { style: 'thin', color: { rgb: '000000' } },
+                                        right: { style: 'thin', color: { rgb: '000000' } }
+                                    }
+                                };
+                            } else {
+                                // 데이터가 있는 셀 (색상 지정)
+                                // 현재 테이블에서 실시간으로 색상을 계산
+                                const tbody = table.querySelector('tbody');
+                                const tableRows = Array.from(tbody.querySelectorAll('tr'));
+                                const currentRow = tableRows[i - 1];
+                                const cells = Array.from(currentRow.querySelectorAll('td'));
+                                const cellBgColor = cells[j].style.backgroundColor;
+
+                                // RGB 값을 hex로 변환
+                                const rgbMatch = cellBgColor.match(/\d+/g);
+                                let hexColor = 'FFFFFF';
+                                if (rgbMatch && rgbMatch.length >= 3) {
+                                    const r = parseInt(rgbMatch[0]).toString(16).padStart(2, '0').toUpperCase();
+                                    const g = parseInt(rgbMatch[1]).toString(16).padStart(2, '0').toUpperCase();
+                                    const b = parseInt(rgbMatch[2]).toString(16).padStart(2, '0').toUpperCase();
+                                    hexColor = r + g + b;
+                                }
+
+                                ws[cellRef].s = {
+                                    font: { bold: true, color: { rgb: 'FFFFFF' }, size: 11 },
+                                    fill: { fgColor: { rgb: hexColor } },
+                                    alignment: { horizontal: 'center', vertical: 'center' },
+                                    border: {
+                                        top: { style: 'thin', color: { rgb: '000000' } },
+                                        bottom: { style: 'thin', color: { rgb: '000000' } },
+                                        left: { style: 'thin', color: { rgb: '000000' } },
+                                        right: { style: 'thin', color: { rgb: '000000' } }
+                                    }
+                                };
+                            }
+                        }
+                    }
+                }
 
                 // 워크시트를 북에 추가
                 XLSX.utils.book_append_sheet(wb, ws, 'DCA Summary');

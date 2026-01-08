@@ -3,64 +3,96 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DCA Backtest Analyzer</title>
+    <title>DCA Backtest Visualizer</title>
     <script src="https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .loader { border-top-color: #3498db; animation: spinner 1.5s linear infinite; }
+        @keyframes spinner { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
 </head>
-<body class="bg-gray-900 text-white min-h-screen p-8">
-    <div class="max-w-4xl mx-auto bg-gray-800 p-8 rounded-xl shadow-2xl border border-gray-700">
-        <h1 class="text-3xl font-bold mb-6 text-center text-blue-400">DCA 익절 데이터 분석기</h1>
-        
-        <div class="mb-8 p-6 border-2 border-dashed border-gray-600 rounded-lg text-center">
-            <input type="file" id="fileInput" multiple accept=".log" class="hidden">
-            <label for="fileInput" class="cursor-pointer bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-md font-bold transition">
-                로그 파일 선택 (다중 선택 가능)
-            </label>
-            <p id="fileCount" class="mt-4 text-gray-400 text-sm">선택된 파일 없음</p>
+<body class="bg-gray-900 text-slate-200 min-h-screen flex flex-col items-center justify-center p-4">
+
+    <div class="max-w-2xl w-full bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700">
+        <h1 class="text-3xl font-extrabold mb-2 text-center bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">
+            DCA Log Analyzer
+        </h1>
+        <p class="text-center text-gray-400 mb-8 text-sm">GitHub Pages 전용 (서버 없이 브라우저에서 분석)</p>
+
+        <div id="loading-overlay" class="text-center py-10">
+            <div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-600 h-12 w-12 mb-4 mx-auto"></div>
+            <p id="status-text" class="text-blue-400 font-mono">파이썬 환경 초기화 중...</p>
         </div>
 
-        <button id="processBtn" class="w-full bg-green-600 hover:bg-green-500 py-4 rounded-lg font-bold text-xl transition disabled:bg-gray-600" disabled>
-            분석 시작 및 엑셀 다운로드
-        </button>
+        <div id="main-ui" class="hidden space-y-6">
+            <div class="flex flex-col items-center justify-center border-2 border-dashed border-gray-600 rounded-xl p-10 hover:border-emerald-500 transition-colors group">
+                <input type="file" id="fileInput" multiple accept=".log" class="hidden">
+                <label for="fileInput" class="cursor-pointer text-center">
+                    <svg class="mx-auto h-12 w-12 text-gray-500 group-hover:text-emerald-500 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <span class="mt-4 block text-lg font-medium">로그 파일들을 선택하세요</span>
+                    <span id="file-name-display" class="mt-2 block text-sm text-gray-500">(.log 파일 다중 선택 가능)</span>
+                </label>
+            </div>
 
-        <div id="status" class="mt-6 text-center font-mono text-yellow-500"></div>
+            <button id="processBtn" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 rounded-xl shadow-lg transition-all active:scale-95 disabled:opacity-50">
+                분석 및 엑셀 결과 다운로드
+            </button>
+        </div>
+
+        <div id="log-output" class="mt-6 text-xs font-mono text-gray-500 max-h-40 overflow-y-auto"></div>
     </div>
 
-    <script type="text/javascript">
+    <script>
         let pyodide;
-        const statusEl = document.getElementById('status');
+        const statusText = document.getElementById('status-text');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const mainUi = document.getElementById('main-ui');
         const fileInput = document.getElementById('fileInput');
+        const fileNameDisplay = document.getElementById('file-name-display');
         const processBtn = document.getElementById('processBtn');
+        const logOutput = document.getElementById('log-output');
 
-        // Pyodide 초기화
-        async function initPyodide() {
-            statusEl.innerText = "파이썬 환경 로딩 중...";
-            pyodide = await loadPyodide();
-            await pyodide.loadPackage(['pandas', 'openpyxl', 'numpy']);
-            statusEl.innerText = "준비 완료!";
-            processBtn.disabled = false;
+        function log(msg) {
+            const p = document.createElement('p');
+            p.textContent = `> ${msg}`;
+            logOutput.prepend(p);
         }
 
-        initPyodide();
+        // Pyodide 로드
+        async function init() {
+            try {
+                pyodide = await loadPyodide();
+                await pyodide.loadPackage(['pandas', 'openpyxl', 'numpy']);
+                loadingOverlay.classList.add('hidden');
+                mainUi.classList.remove('hidden');
+                log("파이썬 엔진 준비 완료.");
+            } catch (e) {
+                statusText.innerText = "로딩 실패. 인터넷 연결을 확인하세요.";
+                console.error(e);
+            }
+        }
+        init();
 
-        fileInput.addEventListener('change', (e) => {
+        fileInput.onchange = (e) => {
             const files = e.target.files;
-            document.getElementById('fileCount').innerText = `${files.length}개의 파일 선택됨`;
-        });
+            fileNameDisplay.innerText = `${files.length}개의 파일 선택됨`;
+            log(`${files.length}개의 파일 대기 중`);
+        };
 
         processBtn.onclick = async () => {
             const files = fileInput.files;
-            if (files.length === 0) return;
+            if (files.length === 0) return alert("파일을 먼저 선택해주세요.");
 
-            statusEl.innerText = "분석 중...";
-            
+            processBtn.disabled = true;
+            processBtn.innerText = "분석 중...";
+
             for (let file of files) {
-                const text = await file.text();
-                const fileName = file.name.replace('.log', '_summary.xlsx');
+                log(`${file.name} 처리 중...`);
+                const content = await file.text();
                 
-                // 파이썬 코드 실행
-                pyodide.globals.set("log_content", text);
-                pyodide.globals.set("output_name", fileName);
+                pyodide.globals.set("raw_log", content);
                 
                 try {
                     await pyodide.runPythonAsync(`
@@ -71,81 +103,89 @@ from io import BytesIO
 
 # 1. 데이터 추출
 pattern = r"□ PROFIT \\[.*?\\] .*? USDT\\s*\\n\\s*\\n- GROUP : (.*?)-\\n- DCA : (\\d+)/"
-matches = re.findall(pattern, log_content)
+matches = re.findall(pattern, raw_log)
 
 if matches:
-    data = [{'Group': m[0].strip(), 'DCA_Step': int(m[1])} for m in matches]
-    df = pd.DataFrame(data)
+    df_raw = pd.DataFrame(matches, columns=['Group', 'DCA_Step'])
+    df_raw['DCA_Step'] = df_raw['DCA_Step'].astype(int)
+    df_raw['Group'] = df_raw['Group'].str.strip()
 
-    # 2. 피벗 테이블 생성 (세로: DCA, 가로: Group)
-    summary_df = df.pivot_table(
+    # 2. 피벗 테이블 (세로: DCA, 가로: Group)
+    summary_df = df_raw.pivot_table(
         index='DCA_Step', 
         columns='Group', 
         aggfunc='size', 
         fill_value=0
     )
 
-    # 3. 0DCA부터 최대 DCA까지 행 보존
+    # 3. 0차부터 최대 차수까지 행 보존 (스킵 방지)
     max_dca = summary_df.index.max()
-    full_range = range(0, max_dca + 1)
-    summary_df = summary_df.reindex(full_range, fill_value=0)
+    full_index = range(0, max_dca + 1)
+    summary_df = summary_df.reindex(full_index, fill_value=0)
     summary_df.index = [f"{i} DCA" for i in summary_df.index]
 
-    # 합계 기준 정렬 (컬럼 정렬용)
-    total_row = summary_df.sum(axis=0)
-    summary_df = summary_df[total_row.sort_values(ascending=False).index]
+    # 합계 기준 가로(Group) 정렬
+    group_order = summary_df.sum(axis=0).sort_values(ascending=False).index
+    summary_df = summary_df[group_order]
 
-    # 4. 로그 스케일 기반 색상 함수
-    def get_log_color(val, min_val, max_val):
-        if val == 0: return "background-color: #ffffff" # 0은 흰색
+    # 4. 로그 스케일 기반 색상 적용 함수
+    def apply_log_color(val, min_v, max_v):
+        if val == 0: return 'background-color: #ffffff; color: #cccccc'
         
-        # 로그 스케일 정규화 (0~1)
-        # 익절 횟수 차이가 작을 때 색상 변화를 크게 함
-        log_val = np.log1p(val)
-        log_min = np.log1p(min_val)
-        log_max = np.log1p(max_val)
+        # 로그 스케일 변환
+        log_v = np.log1p(val)
+        log_min = np.log1p(min_v)
+        log_max = np.log1p(max_v)
         
+        # 정규화 (0~1)
         if log_max == log_min:
             norm = 1.0
         else:
-            norm = (log_val - log_min) / (log_max - log_min)
-            
-        # 연두(#90EE90) -> 빨강(#FF0000) 보간
-        r = int(144 + (255 - 144) * norm)
-        g = int(238 * (1 - norm))
-        b = int(144 * (1 - norm))
-        return f'background-color: rgb({r}, {g}, {b}); color: {"white" if norm > 0.5 else "black"}'
+            norm = (log_v - log_min) / (log_max - log_min)
+        
+        # 연두(#E2F0D9) -> 빨강(#FF7C80) 보간 (HSL/RGB 계산)
+        # 익절 적음(연두): R:226, G:240, B:217
+        # 익절 많음(빨강): R:255, G:124, B:128
+        r = int(226 + (255 - 226) * norm)
+        g = int(240 + (124 - 240) * norm)
+        b = int(217 + (128 - 217) * norm)
+        
+        return f'background-color: rgb({r},{g},{b}); color: black; border: 0.5pt solid white'
 
     # 스타일 적용
-    min_count = summary_df.values.min()
-    max_count = summary_df.values.max()
-    
-    styled_df = summary_df.style.applymap(lambda x: get_log_color(x, min_count, max_count))
+    all_values = summary_df.values
+    min_val = all_values[all_values > 0].min() if any(all_values > 0) else 0
+    max_val = all_values.max()
 
-    # 5. 엑셀 변환
-    out_buffer = BytesIO()
-    with pd.ExcelWriter(out_buffer, engine='openpyxl') as writer:
-        styled_df.to_excel(writer)
+    styled_df = summary_df.style.applymap(lambda x: apply_log_color(x, min_val, max_val))
+
+    # 5. 엑셀 파일 생성 (메모리)
+    out_io = BytesIO()
+    with pd.ExcelWriter(out_io, engine='openpyxl') as writer:
+        styled_df.to_excel(writer, sheet_name='DCA Summary')
     
-    excel_data = out_buffer.getvalue()
+    excel_bytes = out_io.getvalue()
 else:
-    excel_data = None
+    excel_bytes = None
 `);
-                    const excelData = pyodide.globals.get("excel_data");
-                    if (excelData) {
-                        const blob = new Blob([excelData.toJs()], {type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+                    const excelBytes = pyodide.globals.get("excel_bytes");
+                    if (excelBytes) {
+                        const blob = new Blob([excelBytes.toJs()], {type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
                         const url = window.URL.createObjectURL(blob);
                         const a = document.createElement('a');
                         a.href = url;
-                        a.download = fileName;
+                        a.download = file.name.replace('.log', '_DCA_Summary.xlsx');
                         a.click();
+                        log(`${file.name} 다운로드 완료`);
+                    } else {
+                        log(`${file.name}에서 데이터를 찾지 못함`);
                     }
                 } catch (err) {
-                    console.error(err);
-                    statusEl.innerText = "에러 발생: " + err;
+                    log(`에러 발생: ${err.message}`);
                 }
             }
-            statusEl.innerText = "모든 분석 완료!";
+            processBtn.disabled = false;
+            processBtn.innerText = "분석 시작 및 엑셀 다운로드";
         };
     </script>
 </body>

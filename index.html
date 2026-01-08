@@ -2,208 +2,153 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DCA Log Analyzer (Pure JS)</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>DCA 익절 요약 분석기</title>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+    <style>
+        body { font-family: sans-serif; padding: 20px; line-height: 1.6; }
+        .container { max-width: 800px; margin: 0 auto; border: 1px solid #ddd; padding: 20px; border-radius: 8px; }
+        input[type="file"] { margin-bottom: 20px; }
+        button { padding: 10px 20px; background-color: #4CAF50; color: white; border: none; cursor: pointer; border-radius: 4px; }
+        button:hover { background-color: #45a049; }
+        #status { margin-top: 15px; font-weight: bold; }
+    </style>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen p-6 font-sans">
+<body>
 
-    <div class="max-w-3xl mx-auto bg-slate-800 rounded-2xl shadow-2xl border border-slate-700 p-8">
-        <header class="text-center mb-10">
-            <h1 class="text-3xl font-black bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent inline-block">
-                DCA BACKTEST ANALYZER
-            </h1>
-            <p class="text-slate-400 mt-2 text-sm">파이썬 설치 없이 브라우저에서 바로 분석 (Pure JS)</p>
-        </header>
+<div class="container">
+    <h2>DCA Profit 로그 분석기</h2>
+    <p>로그 파일(.log 또는 .txt)들을 선택하세요. 여러 개 선택 가능합니다.</p>
+    <input type="file" id="fileInput" multiple accept=".log,.txt" />
+    <br>
+    <button onclick="processFiles()">엑셀 생성 및 다운로드</button>
+    <div id="status"></div>
+</div>
 
-        <div class="relative border-2 border-dashed border-slate-600 rounded-xl p-10 hover:border-cyan-500 transition-all group text-center mb-6">
-            <input type="file" id="fileInput" multiple accept=".log" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
-            <div class="pointer-events-none">
-                <svg class="mx-auto h-12 w-12 text-slate-500 group-hover:text-cyan-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                </svg>
-                <p class="mt-4 text-lg font-medium">로그 파일들을 여기에 드래그하거나 클릭하세요</p>
-                <p id="fileNames" class="mt-2 text-sm text-slate-500 italic">선택된 파일 없음</p>
-            </div>
-        </div>
+<script>
+async function processFiles() {
+    const fileInput = document.getElementById('fileInput');
+    const status = document.getElementById('status');
+    
+    if (fileInput.files.length === 0) {
+        alert("파일을 선택해주세요.");
+        return;
+    }
 
-        <button id="processBtn" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-4 rounded-xl shadow-lg transition-all active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-500">
-            분석 시작 및 엑셀 다운로드
-        </button>
+    status.innerText = "파일 분석 중...";
+    
+    let rawData = [];
+    let maxDca = 0;
+    let groups = new Set();
 
-        <div id="status" class="mt-8 space-y-2 text-xs font-mono text-slate-400 max-h-48 overflow-y-auto"></div>
-    </div>
-
-    <script>
-        const fileInput = document.getElementById('fileInput');
-        const fileNames = document.getElementById('fileNames');
-        const processBtn = document.getElementById('processBtn');
-        const statusDiv = document.getElementById('status');
-
-        function addLog(msg, color = 'text-slate-400') {
-            const p = document.createElement('p');
-            p.className = color;
-            p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-            statusDiv.prepend(p);
+    // 1. 모든 파일 읽기 및 데이터 추출
+    for (let file of fileInput.files) {
+        const text = await file.text();
+        // 정규식: 그룹명과 DCA 차수 추출 (JS에 맞게 수정)
+        const pattern = /□ PROFIT \[[\s\S]*?\] [\s\S]*? USDT\s*\n\s*\n- GROUP : (.*?)-\n- DCA : (\d+)\//g;
+        
+        let match;
+        while ((match = pattern.exec(text)) !== null) {
+            const groupName = match[1].trim();
+            const dcaStep = parseInt(match[2]);
+            rawData.push({ group: groupName, dca: dcaStep });
+            groups.add(groupName);
+            if (dcaStep > maxDca) maxDca = dcaStep;
         }
+    }
 
-        fileInput.onchange = () => {
-            const files = fileInput.files;
-            fileNames.textContent = files.length > 0 ? `${files.length}개의 파일 선택됨` : '선택된 파일 없음';
-        };
+    if (rawData.length === 0) {
+        status.innerText = "데이터를 찾을 수 없습니다. 로그 형식을 확인하세요.";
+        return;
+    }
 
-        processBtn.onclick = async () => {
-            const files = fileInput.files;
-            if (files.length === 0) return alert('파일을 선택해주세요.');
+    // 2. 피벗 데이터 생성 (행: DCA, 열: Group)
+    const sortedGroups = Array.from(groups).sort();
+    const pivotTable = [];
 
-            processBtn.disabled = true;
-            addLog(`${files.length}개의 파일 처리 시작...`, 'text-cyan-400');
+    // 각 DCA 차수별(0 ~ maxDca) 행 생성
+    for (let d = 0; d <= maxDca; d++) {
+        let row = { "DCA Step": d + " DCA" };
+        let rowTotal = 0;
+        sortedGroups.forEach(g => {
+            const count = rawData.filter(item => item.group === g && item.dca === d).length;
+            row[g] = count;
+            rowTotal += count;
+        });
+        row["Total"] = rowTotal;
+        pivotTable.push(row);
+    }
 
-            for (const file of files) {
-                try {
-                    const text = await file.text();
-                    const results = parseLog(text);
-                    
-                    if (results.length === 0) {
-                        addLog(`${file.name}: 데이터 없음`, 'text-red-400');
-                        continue;
+    // 3. 색상 계산 함수 (Logarithmic Scale)
+    // 연두색(90EE90) -> 빨간색(FF0000)
+    function getColor(value, min, max) {
+        if (value === 0) return "FFFFFF";
+        if (max === min) return "FF0000";
+        
+        // 로그 스케일 적용: 수치가 작을 때 변화가 더 크게 느껴지도록 함
+        const logVal = Math.log(value + 1);
+        const logMin = Math.log(min + 1);
+        const logMax = Math.log(max + 1);
+        const ratio = (logVal - logMin) / (logMax - logMin);
+
+        // RGB 보간 (LightGreen: 144, 238, 144 -> Red: 255, 0, 0)
+        const r = Math.round(144 + (255 - 144) * ratio);
+        const g = Math.round(238 + (0 - 238) * ratio);
+        const b = Math.round(144 + (0 - 144) * ratio);
+        
+        return ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
+    }
+
+    const allCounts = pivotTable.flatMap(row => sortedGroups.map(g => row[g])).filter(v => v > 0);
+    const minVal = Math.min(...allCounts);
+    const maxVal = Math.max(...allCounts);
+
+    // 4. 엑셀 워크시트 생성
+    const wsData = [];
+    // 헤더 행
+    wsData.push(["DCA 차수", ...sortedGroups, "Total"]);
+
+    // 데이터 행
+    pivotTable.forEach(row => {
+        let excelRow = [row["DCA Step"]];
+        sortedGroups.forEach(g => excelRow.push(row[g]));
+        excelRow.push(row["Total"]);
+        wsData.push(excelRow);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    // 5. 스타일 적용 (색상)
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    for (let r = 1; r <= range.e.r; r++) { // 헤더 제외 데이터부터
+        for (let c = 1; c < range.e.c; c++) { // 첫 열(DCA)과 마지막 열(Total) 제외
+            const cellAddress = XLSX.utils.encode_cell({ r: r, c: c });
+            if (!ws[cellAddress]) continue;
+            
+            const val = ws[cellAddress].v;
+            if (typeof val === 'number' && val > 0) {
+                const bgColor = getColor(val, minVal, maxVal);
+                ws[cellAddress].s = {
+                    fill: { fgColor: { rgb: bgColor } },
+                    alignment: { horizontal: "center" },
+                    border: {
+                        top: { style: "thin", color: { rgb: "000000" } },
+                        bottom: { style: "thin", color: { rgb: "000000" } },
+                        left: { style: "thin", color: { rgb: "000000" } },
+                        right: { style: "thin", color: { rgb: "000000" } }
                     }
-
-                    generateExcel(results, file.name);
-                    addLog(`${file.name}: 변환 완료`, 'text-green-400');
-                } catch (err) {
-                    addLog(`${file.name}: 에러 발생 - ${err.message}`, 'text-red-400');
-                }
+                };
             }
-
-            processBtn.disabled = false;
-            addLog('모든 작업이 완료되었습니다.', 'text-cyan-400');
-        };
-
-        // 1. 로그 파싱 함수
-        function parseLog(content) {
-            // regex: □ PROFIT 블록 내부의 GROUP과 DCA 추출
-            const regex = /□ PROFIT \[.*?\] .*? USDT\s*\n\s*\n- GROUP : (.*?)-\n- DCA : (\d+)\//g;
-            const matches = [];
-            let match;
-            
-            while ((match = regex.exec(content)) !== null) {
-                matches.push({
-                    group: match[1].trim(),
-                    dca: parseInt(match[2])
-                });
-            }
-            return matches;
         }
+    }
 
-        // 2. 로그 스케일 색상 계산 함수
-        function getLogColor(val, min, max) {
-            if (val === 0) return { fill: { fgColor: { rgb: "FFFFFF" } }, font: { color: { rgb: "CCCCCC" } } };
-            
-            const logV = Math.log1p(val);
-            const logMin = Math.log1p(min);
-            const logMax = Math.log1p(max);
-            
-            let norm = (logMax === logMin) ? 1.0 : (logV - logMin) / (logMax - logMin);
-            
-            // 연두(E2F0D9) -> 빨강(FF7C80) 보간
-            const r = Math.round(226 + (255 - 226) * norm);
-            const g = Math.round(240 + (124 - 240) * norm);
-            const b = Math.round(217 + (128 - 217) * norm);
-            
-            const hex = ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
-            return {
-                fill: { fgColor: { rgb: hex } },
-                font: { color: { rgb: "000000" } },
-                border: {
-                    top: { style: "thin", color: { rgb: "FFFFFF" } },
-                    bottom: { style: "thin", color: { rgb: "FFFFFF" } },
-                    left: { style: "thin", color: { rgb: "FFFFFF" } },
-                    right: { style: "thin", color: { rgb: "FFFFFF" } }
-                }
-            };
-        }
+    // 6. 파일 다운로드
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "DCA Summary");
+    XLSX.writeFile(wb, "dca_summary_report.xlsx");
 
-        // 3. 엑셀 생성 및 다운로드 함수
-        function generateExcel(data, originalFileName) {
-            const groups = [...new Set(data.map(d => d.group))];
-            const maxDca = Math.max(...data.map(d => d.dca));
-            
-            // 그룹별 총합 계산하여 내림차순 정렬 (가로축 정렬용)
-            const groupTotals = {};
-            groups.forEach(g => {
-                groupTotals[g] = data.filter(d => d.group === g).length;
-            });
-            const sortedGroups = groups.sort((a, b) => groupTotals[b] - groupTotals[a]);
+    status.innerText = `완료! 총 ${rawData.length}건의 익절 분석됨.`;
+}
+</script>
 
-            // 헤더 작성 (A1은 공백, B1부터 그룹명)
-            const header = ["DCA Step", ...sortedGroups];
-            const rows = [header];
-
-            // 데이터 행 작성 (0부터 maxDca까지 빠짐없이)
-            for (let d = 0; d <= maxDca; d++) {
-                const row = [`${d} DCA`];
-                sortedGroups.forEach(g => {
-                    const count = data.filter(item => item.group === g && item.dca === d).length;
-                    row.push(count);
-                });
-                rows.push(row);
-            }
-
-            // 워크북 생성
-            const wb = XLSX.utils.book_new();
-            const ws = XLSX.utils.aoa_to_sheet(rows);
-
-            // 스타일 적용을 위한 데이터 범위 파악
-            const countsOnly = data.map(d => d.dca); // 실제 수치들
-            // 0이 아닌 최소값과 최대값 찾기
-            const allCounts = [];
-            for(let i=1; i < rows.length; i++) {
-                for(let j=1; j < rows[i].length; j++) {
-                    if(rows[i][j] > 0) allCounts.push(rows[i][j]);
-                }
-            }
-            const minVal = Math.min(...allCounts);
-            const maxVal = Math.max(...allCounts);
-
-            // 셀 스타일 입히기
-            const range = XLSX.utils.decode_range(ws['!ref']);
-            for (let R = range.s.r; R <= range.e.r; ++R) {
-                for (let C = range.s.c; C <= range.e.c; ++C) {
-                    const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-                    if (!ws[cellRef]) continue;
-
-                    // 헤더 스타일 (첫 행)
-                    if (R === 0) {
-                        ws[cellRef].s = {
-                            fill: { fgColor: { rgb: "334155" } },
-                            font: { color: { rgb: "FFFFFF" }, bold: true },
-                            alignment: { horizontal: "center" }
-                        };
-                    } 
-                    // 데이터 스타일 (첫 열 제외)
-                    else if (C > 0) {
-                        const val = ws[cellRef].v;
-                        ws[cellRef].s = getLogColor(val, minVal, maxVal);
-                        ws[cellRef].s.alignment = { horizontal: "center" };
-                    }
-                    // 첫 열 스타일 (DCA 차수)
-                    else {
-                        ws[cellRef].s = {
-                            fill: { fgColor: { rgb: "F1F5F9" } },
-                            font: { bold: true }
-                        };
-                    }
-                }
-            }
-
-            XLSX.utils.book_append_sheet(wb, ws, "DCA Summary");
-            
-            // 파일 내보내기
-            const outName = originalFileName.replace('.log', '_DCA_Summary.xlsx');
-            XLSX.writeFile(wb, outName);
-        }
-    </script>
 </body>
 </html>

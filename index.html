@@ -589,27 +589,28 @@
         }
 
         function parseLogFile(content) {
-            const pattern = /□\s+PROFIT\s+\[.*?\]\s+.*?\s+USDT\s*\n\s*\n-\s*GROUP\s*:\s*(.*?)-\s*\n-\s*DCA\s*:\s*(\d+)\//gm;
+    // 수정: (.*?)\s+ 로 변경하여 하이픈(-)을 포함한 전체 그룹명을 가져옵니다.
+    const pattern = /□\s+PROFIT\s+\[.*?\]\s+.*?\s+USDT\s+- GROUP\s*:\s*(.*?)\s+- DCA\s*:\s*(\d+)\//gm;
 
-            const matches = [];
-            let match;
+    const matches = [];
+    let match;
 
-            while ((match = pattern.exec(content)) !== null) {
-                matches.push({
-                    group: match[1].trim(),
-                    dca: parseInt(match[2])
-                });
-            }
+    while ((match = pattern.exec(content)) !== null) {
+        matches.push({
+            group: match[1].trim(), // "1000PEPE-" 가 정확히 들어옵니다.
+            dca: parseInt(match[2])
+        });
+    }
 
-            if (matches.length === 0) {
-                return null;
-            }
+    if (matches.length === 0) {
+        return null;
+    }
 
-            return {
-                data: matches,
-                count: matches.length
-            };
-        }
+    return {
+        data: matches,
+        count: matches.length
+    };
+}
 
         // 공통 색상 계산 함수 (웹과 엑셀에서 동일하게 사용)
         function getCommonColor(value, minVal, maxVal) {

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DCA Trading Analysis - Log Parser (GB Support)</title>
+    <title>DCA Trading Analysis - Log Parser (Memory Optimized)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
@@ -328,16 +328,17 @@
             setTimeout(() => { successDiv.style.display = 'none'; }, 3000);
         }
 
-        // [백엔드] 스트림 방식의 DCA 로그 파서 클래스
+        // [백엔드] 스트림 방식의 DCA 로그 파서 클래스 (DCA 분석 전용)
         class StreamDCAParser {
             constructor() {
                 this.matches = [];
-                // 정규식 최적화 (exec용)
+                // 기존 parseLogFile 함수의 정규식을 그대로 활용
+                // pattern: /□\s+PROFIT\s+\[.*?\]\s+.*?\s+USDT\s+- GROUP\s*:\s*(.*?)\s+- DCA\s*:\s*(\d+)\//
                 this.pattern = /□\s+PROFIT\s+\[.*?\]\s+.*?\s+USDT\s+- GROUP\s*:\s*(.*?)\s+- DCA\s*:\s*(\d+)\//;
             }
 
             parseLine(line) {
-                // 빠른 필터링 (정규식 부하 감소)
+                // 빠른 필터링: PROFIT과 GROUP이 없는 라인은 정규식 검사조차 안 함 (속도 향상)
                 if (!line.includes("PROFIT") || !line.includes("GROUP")) return;
 
                 const match = this.pattern.exec(line);
@@ -368,7 +369,7 @@
 
             const files = selectedFiles;
             
-            // 재귀적 파일 처리 함수 (순차 처리)
+            // 재귀적 파일 처리 함수 (순차 처리로 메모리 안정성 확보)
             const processNextFile = (fileIndex) => {
                 if (fileIndex >= files.length) {
                     finishAnalysis();
@@ -384,7 +385,7 @@
 
                 chunkReader.onload = function(e) {
                     const chunkText = e.target.result;
-                    e.target.result = null; // [중요] 메모리 즉시 해제
+                    e.target.result = null; // [중요] 읽은 원본 메모리 즉시 해제
 
                     let data = leftover + chunkText;
                     let lastNewlineIndex = 0;
@@ -392,7 +393,7 @@
 
                     // 라인 단위 수동 파싱 (split 사용 안 함)
                     while ((nextNewlineIndex = data.indexOf('\n', lastNewlineIndex)) > -1) {
-                        // 문자열 강제 복사로 원본 참조 끊기
+                        // 문자열 강제 복사로 원본 참조 끊기 (V8 Memory Leak 방지)
                         const rawLine = data.substring(lastNewlineIndex, nextNewlineIndex);
                         const line = (' ' + rawLine).slice(1);
 
@@ -402,18 +403,18 @@
                         lastNewlineIndex = nextNewlineIndex + 1;
                     }
 
-                    // 남은 부분 저장
+                    // 처리되지 않은 나머지 (마지막 줄) 저장
                     leftover = (' ' + data.substring(lastNewlineIndex)).slice(1);
-                    data = null; // [중요] 메모리 해제
+                    data = null; // [중요] 처리된 데이터 변수 해제
 
                     offset += CHUNK_SIZE;
 
-                    // 진행률 표시 업데이트
+                    // 진행률 표시 업데이트 (기존 스피너 아래에 텍스트 추가)
                     const percent = Math.min(100, Math.round((offset / fileSize) * 100));
                     loadingText.textContent = `분석 중... 파일 ${fileIndex + 1}/${files.length} (${percent}%)`;
 
                     if (offset < fileSize) {
-                        // GC를 위한 잠깐의 휴식 (0ms라도 스택 비움 효과)
+                        // 0ms 딜레이로 스택 비우기 (GC 기회 제공)
                         setTimeout(readNextChunk, 0);
                     } else {
                         // 파일 끝 처리
@@ -425,19 +426,19 @@
                             analysisData[file.name] = result;
                         }
 
-                        // 변수 초기화
+                        // 변수 명시적 초기화
                         parser = null;
                         chunkReader = null;
                         leftover = null;
 
-                        // 다음 파일 처리 전 대기 (브라우저 응답성 확보)
+                        // 다음 파일 처리 전 잠깐 대기 (브라우저 응답성 확보)
                         setTimeout(() => processNextFile(fileIndex + 1), 300);
                     }
                 };
 
                 chunkReader.onerror = () => {
                     showError(`${file.name} 읽기 실패`);
-                    processNextFile(fileIndex + 1); // 에러나도 다음 파일로
+                    processNextFile(fileIndex + 1); // 에러나도 다음 파일로 진행
                 };
 
                 const readNextChunk = () => {
@@ -465,7 +466,7 @@
             showSuccess(`${selectedFiles.length}개 파일 분석 완료!`);
         }
 
-        // --- 기존 UI/로직 유지 ---
+        // --- 기존 UI/로직 (색상 계산, 테이블 렌더링, 엑셀 다운로드) ---
 
         function getCommonColor(value, minVal, maxVal) {
             if (value === 0) return { hex: 'CCCCCC', rgb: 'rgba(200, 200, 200, 0.3)' };

@@ -593,7 +593,7 @@
             let buffer = '';
             let offset = 0;
             const matches = [];
-            const pattern = /□\s+PROFIT\s+\[.*?\]\s+.*?\s+USDT\s+- GROUP\s*:\s*(.*?)\s+- DCA\s*:\s*(\d+)\//g;
+            const pattern = /□\s+PROFIT\s+\[.*?\].*?\r?\n\r?\n-\s*GROUP\s*:\s*(.*?)-\s*\r?\n-\s*DCA\s*:\s*(\d+)/g;
 
             try {
                 while (offset < file.size) {

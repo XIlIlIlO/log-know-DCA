@@ -577,15 +577,20 @@
         }
 
         // ==========================================
-        // 핵심 로직 변경: 정규식 수정됨
+        // 핵심 로직 변경: 정규식 및 파싱 로직 최적화
         // ==========================================
         
         class StreamDcaParser {
             constructor() {
-                // 수정 포인트: (.*?) 뒤에 \s+-\s+ 를 추가하여 그룹명이 끝나는 지점을 강제함
-                // 기존: GROUP\s*:\s*(.*?)[\s\S]*? -> 그룹명을 빈값으로 잡는 문제
-                // 변경: GROUP\s*:\s*(.*?)\s+-\s+   -> 뒤에 ' - ' 가 나올 때까지 그룹명을 잡음
-                this.regex = /□\s+PROFIT\s+\[.*?\][\s\S]*?-\s*GROUP\s*:\s*(.*?)\s+-\s+[\s\S]*?-\s*DCA\s*:\s*(\d+)\/\d+/g;
+                // 수정된 정규식 설명:
+                // 1. (?:□|^|[\r\n]|\s*) : □ 문자가 없어도 되도록, 혹은 줄바꿈이나 공백 이후 PROFIT을 찾도록 유연화
+                // 2. PROFIT : 키워드 찾기
+                // 3. GROUP\s*:\s*(.*?) : 그룹명을 잡되...
+                // 4. (?:\s+-\s+|$) : 그룹명 뒤에 " - "가 오거나, 혹은 그 줄이 끝나거나 다른 패턴이 시작되면 끊음 (탐욕적 매칭 방지)
+                // 5. DCA\s*:\s*(\d+) : DCA 단계 추출
+                
+                // 주의: [\s\S]*?는 여전히 사용하지만, GROUP명 매칭 조건을 강화하여 다음 로그로 넘어가는 것을 방지함.
+                this.regex = /PROFIT\s+\[.*?\][\s\S]*?-\s*GROUP\s*:\s*(.*?)(?:\s+-\s+|[\r\n])[\s\S]*?-\s*DCA\s*:\s*(\d+)/g;
                 this.buffer = "";
             }
 
@@ -618,8 +623,22 @@
                     lastIndex = this.regex.lastIndex;
                 }
 
+                // 메모리 관리: 처리된 부분 잘라내기
+                // 단, 마지막 매칭 지점이 버퍼 끝과 너무 가까우면(잘린 토큰 가능성) 남겨야 하지만,
+                // 기본적으로 lastIndex 기준 잘라내도 안전함 (DCA 숫자까지 다 읽었으므로)
                 if (lastIndex > 0) {
                     this.buffer = this.buffer.slice(lastIndex);
+                }
+                
+                // 버퍼가 너무 커지는 것을 방지 (10MB 이상 쌓이면 강제 정리 - 비정상 패턴 대비)
+                if (this.buffer.length > 10 * 1024 * 1024) {
+                   const lastProfit = this.buffer.lastIndexOf("PROFIT");
+                   if (lastProfit > -1) {
+                       this.buffer = this.buffer.slice(lastProfit);
+                   } else {
+                       // PROFIT도 없으면 그냥 날림
+                       this.buffer = ""; 
+                   }
                 }
             }
         }
@@ -803,7 +822,6 @@
             rows.forEach(row => {
                 const tr = document.createElement('tr');
                 const tdGroup = document.createElement('td');
-                // 그룹명이 비어있을 경우 (알 수 없음) 표시
                 tdGroup.textContent = row.group ? row.group : "(알 수 없음)";
                 tr.appendChild(tdGroup);
 

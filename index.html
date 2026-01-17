@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DCA Trading Analysis - Log Parser (Memory Optimized)</title>
+    <title>DCA Trading Analysis - Log Parser (Fixed)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
@@ -328,24 +328,24 @@
             setTimeout(() => { successDiv.style.display = 'none'; }, 3000);
         }
 
-        // [백엔드] 스트림 방식의 DCA 로그 파서 클래스 (DCA 분석 전용)
+        // [백엔드] 스트림 방식의 DCA 로그 파서 클래스 (유연한 Regex 적용)
         class StreamDCAParser {
             constructor() {
                 this.matches = [];
-                // 기존 parseLogFile 함수의 정규식을 그대로 활용
-                // pattern: /□\s+PROFIT\s+\[.*?\]\s+.*?\s+USDT\s+- GROUP\s*:\s*(.*?)\s+- DCA\s*:\s*(\d+)\//
-                this.pattern = /□\s+PROFIT\s+\[.*?\]\s+.*?\s+USDT\s+- GROUP\s*:\s*(.*?)\s+- DCA\s*:\s*(\d+)\//;
+                // [수정] 유연한 정규식: 앞부분(□)이나 포맷(USDT 위치 등)에 구애받지 않고 PROFIT, GROUP, DCA만 추출
+                // 예: "PROFIT [BTC] ... GROUP : BTC - DCA : 1" 형태도 매칭 가능
+                this.pattern = /(?:PROFIT|익절).*?GROUP\s*:\s*(.*?)\s+-\s+DCA\s*:\s*(\d+)/i;
             }
 
             parseLine(line) {
-                // 빠른 필터링: PROFIT과 GROUP이 없는 라인은 정규식 검사조차 안 함 (속도 향상)
-                if (!line.includes("PROFIT") || !line.includes("GROUP")) return;
+                // 빠른 필터링: PROFIT(또는 익절)과 GROUP이 없는 라인은 패스
+                if ((!line.includes("PROFIT") && !line.includes("익절")) || !line.includes("GROUP")) return;
 
                 const match = this.pattern.exec(line);
                 if (match) {
                     this.matches.push({
-                        group: match[1].trim(),
-                        dca: parseInt(match[2])
+                        group: match[1].trim(), // 그룹명 추출
+                        dca: parseInt(match[2]) // DCA 단계 추출
                     });
                 }
             }

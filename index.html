@@ -482,7 +482,7 @@
 
     <script>
         let selectedFiles = [];
-        let mergedGroupMap = {}; // 모든 파일의 통합 데이터 { "GroupA": { 0: 5, 1: 2 }, ... }
+        let mergedGroupMap = {}; // 모든 파일의 통합 데이터
         let currentMaxDCA = 0;
         let currentTotalProfitCount = 0;
         let currentTotalDcaSum = 0;
@@ -491,7 +491,7 @@
         const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB 단위로 읽기
 
         // ==========================================
-        // UI 이벤트 핸들링 (기존 코드 유지)
+        // UI 이벤트 핸들링
         // ==========================================
         const uploadSection = document.getElementById('uploadSection');
         const fileInput = document.getElementById('fileInput');
@@ -523,7 +523,6 @@
             updateFileList();
 
             if (selectedFiles.length > 0) {
-                // UI 렌더링 후 분석 시작
                 setTimeout(() => {
                     analyzeFiles();
                 }, 300);
@@ -578,25 +577,36 @@
         }
 
         // ==========================================
-        // 핵심 로직 변경: 대용량 스트림 파서
+        // 핵심 로직 변경: 버퍼 기반 멀티라인 파서
         // ==========================================
         
-        // DCA 데이터만 추출하는 경량 파서 클래스
         class StreamDcaParser {
             constructor() {
-                this.regex = /□\s+PROFIT\s+\[.*?\].*?\r?\n\r?\n-\s*GROUP\s*:\s*(.*?)-\s*\r?\n-\s*DCA\s*:\s*(\d+)\/\d+/g;
+                // 수정된 정규식:
+                // 1. [\s\S]*? : 줄바꿈을 포함한 모든 문자 매칭 (Multi-line 대응)
+                // 2. 'g' flag : 전역 검색으로 루프 처리 가능
+                this.regex = /□\s+PROFIT\s+\[.*?\][\s\S]*?-\s*GROUP\s*:\s*(.*?)[\s\S]*?-\s*DCA\s*:\s*(\d+)\/\d+/g;
+                this.buffer = "";
             }
 
-            parseLine(line) {
-                // 빠른 필터링: PROFIT 라인이 아니면 건너뜀 (성능 최적화)
-                if (!line.includes("PROFIT") || !line.includes("DCA")) return;
+            processChunk(chunk) {
+                // 1. 새로운 청크를 버퍼 뒤에 붙임
+                this.buffer += chunk;
+                
+                let match;
+                let lastIndex = 0;
 
-                const match = this.regex.exec(line);
-                if (match) {
+                // 2. 버퍼를 처음부터 검색하기 위해 lastIndex 초기화
+                // (이전 매칭 이후부터 찾으려면 lastIndex를 관리해야 하지만, 
+                //  버퍼를 잘라낼 것이므로 0으로 리셋하는 것이 안전함)
+                this.regex.lastIndex = 0;
+
+                // 3. 루프를 돌며 모든 매칭 확인
+                while ((match = this.regex.exec(this.buffer)) !== null) {
                     const groupName = match[1].trim();
                     const dcaStep = parseInt(match[2]);
 
-                    // 전역 데이터에 즉시 집계 (원시 데이터 저장 안 함 -> 메모리 절약)
+                    // 데이터 집계
                     if (!mergedGroupMap[groupName]) {
                         mergedGroupMap[groupName] = {};
                     }
@@ -606,10 +616,18 @@
                     
                     mergedGroupMap[groupName][dcaStep]++;
                     
-                    // 통계 업데이트
                     if (dcaStep > currentMaxDCA) currentMaxDCA = dcaStep;
                     currentTotalProfitCount++;
                     currentTotalDcaSum += dcaStep;
+
+                    // 마지막 매칭이 끝난 지점을 기록
+                    lastIndex = this.regex.lastIndex;
+                }
+
+                // 4. 처리된 부분만큼 버퍼 잘라내기 (메모리 관리)
+                // 단, 아직 매칭되지 않은 뒷부분은 남겨둬야 함 (다음 청크와 이어질 수 있음)
+                if (lastIndex > 0) {
+                    this.buffer = this.buffer.slice(lastIndex);
                 }
             }
         }
@@ -628,7 +646,6 @@
             let filesProcessed = 0;
             const totalFiles = selectedFiles.length;
 
-            // 파일 순차 처리 함수
             const processNextFile = (fileIndex) => {
                 if (fileIndex >= totalFiles) {
                     finishAnalysis();
@@ -638,30 +655,18 @@
                 const file = selectedFiles[fileIndex];
                 const fileSize = file.size;
                 let offset = 0;
-                let leftover = "";
+                
+                // 파일마다 새로운 파서 인스턴스 생성
                 let parser = new StreamDcaParser();
                 let chunkReader = new FileReader();
 
                 chunkReader.onload = function(e) {
                     const chunkText = e.target.result;
-                    let data = leftover + chunkText;
+                    
+                    // 파서에게 청크 전달
+                    parser.processChunk(chunkText);
+                    
                     e.target.result = null; // 메모리 해제 힌트
-
-                    let lastNewlineIndex = 0;
-                    let nextNewlineIndex = 0;
-
-                    // 라인 단위 파싱
-                    while ((nextNewlineIndex = data.indexOf('\n', lastNewlineIndex)) > -1) {
-                        const line = data.substring(lastNewlineIndex, nextNewlineIndex);
-                        if (line.trim().length > 0) {
-                            parser.parseLine(line);
-                        }
-                        lastNewlineIndex = nextNewlineIndex + 1;
-                    }
-
-                    leftover = data.substring(lastNewlineIndex);
-                    data = null; // 메모리 해제 힌트
-
                     offset += CHUNK_SIZE;
                     
                     // 진행률 업데이트
@@ -670,18 +675,11 @@
                     progressText.innerText = `${totalPercent}% (파일 ${fileIndex + 1}/${totalFiles} 처리 중)`;
 
                     if (offset < fileSize) {
-                        // 다음 청크 읽기 (UI 블로킹 방지를 위해 setTimeout 사용)
                         setTimeout(readNextChunk, 0);
                     } else {
-                        // 파일 끝 처리
-                        if (leftover.trim().length > 0) {
-                            parser.parseLine(leftover);
-                        }
-                        
-                        // 정리 후 다음 파일로
+                        // 파일 처리 완료
                         parser = null;
                         chunkReader = null;
-                        leftover = null;
                         filesProcessed++;
                         setTimeout(() => processNextFile(fileIndex + 1), 10);
                     }
@@ -701,7 +699,6 @@
                 readNextChunk();
             };
 
-            // 첫 번째 파일 시작
             processNextFile(0);
         }
 
@@ -718,7 +715,7 @@
         }
 
         // ==========================================
-        // 결과 렌더링 및 엑셀 (기존 코드 최적화)
+        // 결과 렌더링 및 엑셀 (기존 코드 유지/최적화)
         // ==========================================
 
         function getCommonColor(value, minVal, maxVal) {
@@ -756,7 +753,7 @@
         }
 
         function renderResults() {
-            const groupMap = mergedGroupMap; // 이미 집계된 맵 사용
+            const groupMap = mergedGroupMap;
             const maxDCA = currentMaxDCA;
             
             const totalGroups = Object.keys(groupMap).length;
@@ -813,7 +810,6 @@
             const minVal = allValues.length > 0 ? Math.min(...allValues) : 0;
             const maxVal = allValues.length > 0 ? Math.max(...allValues) : 0;
 
-            // DOM 렌더링 최적화를 위해 Fragment 사용
             const fragment = document.createDocumentFragment();
 
             rows.forEach(row => {
@@ -857,14 +853,12 @@
                 const workbook = new ExcelJS.Workbook();
                 const worksheet = workbook.addWorksheet('DCA Summary');
 
-                // 헤더 구성
                 const headers = ['그룹명'];
                 for (let i = 0; i <= currentMaxDCA; i++) {
                     headers.push(`${i} DCA`);
                 }
                 headers.push('Total');
 
-                // 헤더 추가
                 const headerRow = worksheet.addRow(headers);
                 headerRow.eachCell((cell) => {
                     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
@@ -876,7 +870,6 @@
                     };
                 });
 
-                // 데이터 준비 및 정렬
                 const allValues = [];
                 const rows = [];
                 for (const group in mergedGroupMap) {
@@ -895,7 +888,6 @@
                 const minVal = allValues.length > 0 ? Math.min(...allValues) : 0;
                 const maxVal = allValues.length > 0 ? Math.max(...allValues) : 0;
 
-                // 엑셀 행 추가
                 rows.forEach(rowData => {
                     const rowValues = [rowData.group, ...rowData.data, rowData.total];
                     const row = worksheet.addRow(rowValues);
@@ -907,13 +899,11 @@
                         };
                         cell.alignment = { vertical: 'middle', horizontal: 'center' };
 
-                        // 1. 그룹명
                         if (colNumber === 1) {
                             cell.font = { bold: true };
                             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9F9F9' } };
                             cell.alignment = { vertical: 'middle', horizontal: 'left' };
                         } 
-                        // 2. 익절 횟수 (히트맵)
                         else if (colNumber > 1 && colNumber <= headers.length - 1) {
                             const val = cell.value;
                             if (val > 0) {
@@ -925,7 +915,6 @@
                                 cell.font = { color: { argb: 'FFCCCCCC' } };
                             }
                         }
-                        // 3. Total
                         else if (colNumber === headers.length) {
                             cell.font = { bold: true };
                             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0F0' } };
@@ -933,7 +922,6 @@
                     });
                 });
 
-                // 열 너비 자동 조절
                 worksheet.columns.forEach((column) => {
                     let maxLength = 0;
                     column.eachCell({ includeEmpty: true }, (cell) => {

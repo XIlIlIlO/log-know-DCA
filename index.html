@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DCA Trading Analysis - Log Parser (Fixed)</title>
+    <title>DCA Trading Analysis - Log Parser (Large File Support)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
@@ -18,7 +18,11 @@
             --color-error: #f44336;
         }
 
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -27,11 +31,26 @@
             padding: 20px;
         }
 
-        .container { max-width: 1200px; margin: 0 auto; }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
 
-        header { text-align: center; margin-bottom: 40px; }
-        h1 { font-size: 28px; margin-bottom: 10px; font-weight: 600; }
-        .subtitle { color: #666; font-size: 14px; }
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+        }
 
         .upload-section {
             background: var(--color-surface);
@@ -54,115 +73,325 @@
             border-color: var(--color-primary);
         }
 
-        .upload-icon { font-size: 48px; margin-bottom: 15px; }
-        .upload-text { font-size: 16px; margin-bottom: 8px; color: var(--color-text); }
-        .upload-hint { font-size: 13px; color: #999; margin-bottom: 20px; }
-        #fileInput { display: none; }
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        .upload-text {
+            font-size: 16px;
+            margin-bottom: 8px;
+            color: var(--color-text);
+        }
+
+        .upload-hint {
+            font-size: 13px;
+            color: #999;
+            margin-bottom: 20px;
+        }
+
+        #fileInput {
+            display: none;
+        }
 
         .btn {
-            display: inline-block; padding: 10px 24px; border-radius: 6px; border: none;
-            font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.3s ease;
+            display: inline-block;
+            padding: 10px 24px;
+            border-radius: 6px;
+            border: none;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
         }
-        .btn-primary { background-color: var(--color-primary); color: white; margin: 0 8px; }
+
+        .btn-primary {
+            background-color: var(--color-primary);
+            color: white;
+            margin: 0 8px;
+        }
+
         .btn-primary:hover {
-            background-color: #1976D2; transform: translateY(-2px);
+            background-color: #1976D2;
+            transform: translateY(-2px);
             box-shadow: 0 4px 12px rgba(33, 150, 243, 0.4);
         }
-        .btn-secondary { background-color: var(--color-success); color: white; }
-        .btn-secondary:hover { background-color: #45a049; }
-        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .btn-secondary {
+            background-color: var(--color-success);
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background-color: #45a049;
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
 
         .file-list {
-            margin-top: 20px; padding: 15px; background-color: #f9f9f9;
-            border-radius: 6px; display: none;
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 6px;
+            display: none;
         }
+
         .file-item {
-            display: flex; justify-content: space-between; align-items: center;
-            padding: 8px 0; border-bottom: 1px solid var(--color-border); font-size: 13px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--color-border);
+            font-size: 13px;
         }
-        .file-item:last-child { border-bottom: none; }
-        .file-name { color: var(--color-text); font-weight: 500; }
-        .file-size { color: #999; font-size: 12px; }
+
+        .file-item:last-child {
+            border-bottom: none;
+        }
+
+        .file-name {
+            color: var(--color-text);
+            font-weight: 500;
+        }
+
+        .file-size {
+            color: #999;
+            font-size: 12px;
+        }
+
         .remove-file {
-            color: var(--color-error); cursor: pointer; font-size: 12px;
-            font-weight: 600; padding: 4px 8px; border-radius: 4px; transition: background-color 0.2s;
+            color: var(--color-error);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
         }
-        .remove-file:hover { background-color: rgba(244, 67, 54, 0.1); }
+
+        .remove-file:hover {
+            background-color: rgba(244, 67, 54, 0.1);
+        }
 
         .results-section {
-            background: var(--color-surface); border-radius: 8px; padding: 30px;
-            margin-bottom: 30px; display: none;
+            background: var(--color-surface);
+            border-radius: 8px;
+            padding: 30px;
+            margin-bottom: 30px;
+            display: none;
         }
+
         .results-header {
-            display: flex; justify-content: space-between; align-items: center;
-            margin-bottom: 25px; padding-bottom: 15px; border-bottom: 2px solid var(--color-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid var(--color-border);
         }
-        .results-title { font-size: 20px; font-weight: 600; }
 
-        .stats { display: flex; gap: 30px; margin-bottom: 30px; flex-wrap: wrap; }
+        .results-title {
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .stats {
+            display: flex;
+            gap: 30px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
         .stat-item {
-            flex: 1; min-width: 150px; padding: 15px;
-            background: #f5f5f5; border-radius: 6px;
+            flex: 1;
+            min-width: 150px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 6px;
         }
+
         .stat-label {
-            font-size: 12px; color: #666; text-transform: uppercase;
-            font-weight: 600; margin-bottom: 5px;
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            font-weight: 600;
+            margin-bottom: 5px;
         }
-        .stat-value { font-size: 28px; font-weight: 700; color: var(--color-primary); }
 
-        .table-container { overflow-x: auto; border-radius: 6px; border: 1px solid var(--color-border); }
-        table { width: 100%; border-collapse: collapse; background: white; }
+        .stat-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--color-primary);
+        }
+
+        .table-container {
+            overflow-x: auto;
+            border-radius: 6px;
+            border: 1px solid var(--color-border);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+        }
+
         th {
-            background-color: #f5f5f5; padding: 12px 10px; text-align: center;
-            font-weight: 600; font-size: 13px; border: 1px solid var(--color-border);
-            color: var(--color-text); white-space: nowrap;
+            background-color: #f5f5f5;
+            padding: 12px 10px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 13px;
+            border: 1px solid var(--color-border);
+            color: var(--color-text);
+            white-space: nowrap;
         }
-        th:first-child { text-align: left; background-color: #eeeeee; min-width: 150px; }
-        td {
-            padding: 12px 10px; text-align: center; border: 1px solid var(--color-border);
-            font-size: 13px; font-weight: 500;
-        }
-        td:first-child { text-align: left; background-color: #fafafa; font-weight: 600; color: var(--color-text); }
 
-        .color-cell { color: white; font-weight: 600; text-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+        th:first-child {
+            text-align: left;
+            background-color: #eeeeee;
+            min-width: 150px;
+        }
+
+        td {
+            padding: 12px 10px;
+            text-align: center;
+            border: 1px solid var(--color-border);
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        td:first-child {
+            text-align: left;
+            background-color: #fafafa;
+            font-weight: 600;
+            color: var(--color-text);
+        }
+
+        .color-cell {
+            color: white;
+            font-weight: 600;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        }
 
         .color-legend {
-            margin-top: 30px; padding: 20px; background-color: #f5f5f5; border-radius: 6px;
+            margin-top: 30px;
+            padding: 20px;
+            background-color: #f5f5f5;
+            border-radius: 6px;
         }
-        .legend-title { font-weight: 600; margin-bottom: 15px; font-size: 14px; }
+
+        .legend-title {
+            font-weight: 600;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
         .legend-bar {
-            height: 20px; border-radius: 4px;
-            background: linear-gradient(to right, #c8e6c9 0%, #a5d6a7 20%, #81c784 40%, #ffd54f 60%, #ffb74d 75%, #ef5350 90%, #c62828 100%);
+            height: 20px;
+            border-radius: 4px;
+            background: linear-gradient(to right, 
+                #c8e6c9 0%, 
+                #a5d6a7 20%, 
+                #81c784 40%, 
+                #ffd54f 60%, 
+                #ffb74d 75%, 
+                #ef5350 90%, 
+                #c62828 100%);
             margin-bottom: 10px;
         }
-        .legend-labels { display: flex; justify-content: space-between; font-size: 12px; color: #666; }
+
+        .legend-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #666;
+        }
 
         .error-message {
-            background-color: #ffebee; border: 1px solid #ef5350; color: #c62828;
-            padding: 15px; border-radius: 6px; margin-bottom: 20px; display: none;
+            background-color: #ffebee;
+            border: 1px solid #ef5350;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            display: none;
         }
+
         .success-message {
-            background-color: #e8f5e9; border: 1px solid #4caf50; color: #2e7d32;
-            padding: 15px; border-radius: 6px; margin-bottom: 20px; display: none;
+            background-color: #e8f5e9;
+            border: 1px solid #4caf50;
+            color: #2e7d32;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            display: none;
         }
 
-        .loading { text-align: center; padding: 40px; color: #666; display: none; }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+            display: none;
+        }
+
         .spinner {
-            border: 3px solid #f3f3f3; border-top: 3px solid var(--color-primary);
-            border-radius: 50%; width: 30px; height: 30px;
-            animation: spin 1s linear infinite; margin: 0 auto 15px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid var(--color-primary);
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
         }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-        .footer { text-align: center; color: #999; font-size: 12px; margin-top: 50px; }
+        .progress-text {
+            margin-top: 10px;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--color-primary);
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .footer {
+            text-align: center;
+            color: #999;
+            font-size: 12px;
+            margin-top: 50px;
+        }
 
         @media (max-width: 768px) {
-            .container { padding: 0 10px; }
-            h1 { font-size: 22px; }
-            .results-header { flex-direction: column; align-items: flex-start; }
-            .stats { gap: 15px; }
-            table { font-size: 12px; }
-            th, td { padding: 8px 6px; }
+            .container {
+                padding: 0 10px;
+            }
+
+            h1 {
+                font-size: 22px;
+            }
+
+            .results-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .stats {
+                gap: 15px;
+            }
+
+            table {
+                font-size: 12px;
+            }
+
+            th, td {
+                padding: 8px 6px;
+            }
         }
     </style>
 </head>
@@ -170,14 +399,16 @@
     <div class="container">
         <header>
             <h1>📊 DCA Trading Analysis</h1>
-            <p class="subtitle">Log 파일을 업로드하여 DCA 익절 현황을 분석하세요 (대용량 파일 지원)</p>
+            <p class="subtitle">Log 파일을 업로드하여 DCA 익절 현황을 분석하세요 (대용량 지원)</p>
         </header>
 
         <div class="upload-section" id="uploadSection">
             <div class="upload-icon">📁</div>
             <div class="upload-text">여기에 파일을 드래그하거나 클릭하여 업로드</div>
-            <div class="upload-hint">지원 형식: .log, .txt (GB단위 대용량 파일 가능)</div>
-            <button class="btn btn-primary" id="selectFileBtn">파일 선택</button>
+            <div class="upload-hint">지원 형식: .log, .txt (대용량 파일 지원)</div>
+            <button class="btn btn-primary" id="selectFileBtn">
+                파일 선택
+            </button>
             <input type="file" id="fileInput" multiple accept=".log,.txt">
         </div>
 
@@ -191,13 +422,16 @@
 
         <div class="loading" id="loading">
             <div class="spinner"></div>
-            <p id="loadingText">데이터 분석 중...</p>
+            <p>데이터 분석 중...</p>
+            <div class="progress-text" id="progressText">0%</div>
         </div>
 
         <div class="results-section" id="resultsSection">
             <div class="results-header">
                 <div class="results-title">분석 결과</div>
-                <button class="btn btn-secondary" id="exportBtn">📥 Excel로 다운로드</button>
+                <button class="btn btn-secondary" id="exportBtn">
+                    📥 Excel로 다운로드
+                </button>
             </div>
 
             <div class="stats">
@@ -221,8 +455,10 @@
 
             <div class="table-container">
                 <table id="resultTable">
-                    <thead id="tableHead"></thead>
-                    <tbody id="tableBody"></tbody>
+                    <thead id="tableHead">
+                    </thead>
+                    <tbody id="tableBody">
+                    </tbody>
                 </table>
             </div>
 
@@ -230,7 +466,11 @@
                 <div class="legend-title">색상 범례 (로그함수 기반 그래디언트)</div>
                 <div class="legend-bar"></div>
                 <div class="legend-labels">
-                    <span>최소</span><span>낮음</span><span>중간</span><span>높음</span><span>최대</span>
+                    <span>최소</span>
+                    <span>낮음</span>
+                    <span>중간</span>
+                    <span>높음</span>
+                    <span>최대</span>
                 </div>
             </div>
         </div>
@@ -242,14 +482,17 @@
 
     <script>
         let selectedFiles = [];
-        let analysisData = {};
+        let mergedGroupMap = {}; // 모든 파일의 통합 데이터 { "GroupA": { 0: 5, 1: 2 }, ... }
         let currentMaxDCA = 0;
-        let currentGroupMap = {};
+        let currentTotalProfitCount = 0;
+        let currentTotalDcaSum = 0;
         
-        // [백엔드] 메모리 최적화를 위한 Chunk Size 설정 (5MB)
-        const CHUNK_SIZE = 5 * 1024 * 1024;
+        // 메모리 관리를 위한 설정
+        const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB 단위로 읽기
 
-        // UI 이벤트 리스너
+        // ==========================================
+        // UI 이벤트 핸들링 (기존 코드 유지)
+        // ==========================================
         const uploadSection = document.getElementById('uploadSection');
         const fileInput = document.getElementById('fileInput');
         const selectFileBtn = document.getElementById('selectFileBtn');
@@ -281,7 +524,9 @@
 
             if (selectedFiles.length > 0) {
                 // UI 렌더링 후 분석 시작
-                setTimeout(analyzeFiles, 300);
+                setTimeout(() => {
+                    analyzeFiles();
+                }, 300);
             }
         }
 
@@ -318,146 +563,152 @@
             const errorDiv = document.getElementById('errorMessage');
             errorDiv.textContent = '❌ ' + message;
             errorDiv.style.display = 'block';
-            setTimeout(() => { errorDiv.style.display = 'none'; }, 5000);
+            setTimeout(() => {
+                errorDiv.style.display = 'none';
+            }, 5000);
         }
 
         function showSuccess(message) {
             const successDiv = document.getElementById('successMessage');
             successDiv.textContent = '✅ ' + message;
             successDiv.style.display = 'block';
-            setTimeout(() => { successDiv.style.display = 'none'; }, 3000);
+            setTimeout(() => {
+                successDiv.style.display = 'none';
+            }, 3000);
         }
 
-        // [백엔드] 스트림 방식의 DCA 로그 파서 클래스 (유연한 Regex 적용)
-        class StreamDCAParser {
+        // ==========================================
+        // 핵심 로직 변경: 대용량 스트림 파서
+        // ==========================================
+        
+        // DCA 데이터만 추출하는 경량 파서 클래스
+        class StreamDcaParser {
             constructor() {
-                this.matches = [];
-                // [수정] 유연한 정규식: 앞부분(□)이나 포맷(USDT 위치 등)에 구애받지 않고 PROFIT, GROUP, DCA만 추출
-                // 예: "PROFIT [BTC] ... GROUP : BTC - DCA : 1" 형태도 매칭 가능
-                this.pattern = /(?:PROFIT|익절).*?GROUP\s*:\s*(.*?)\s+-\s+DCA\s*:\s*(\d+)/i;
+                this.regex = /PROFIT\s+\[.*?\]\s+.*?\s+USDT\s+- GROUP\s*:\s*(.*?)\s+- DCA\s*:\s*(\d+)\//;
             }
 
             parseLine(line) {
-                // 빠른 필터링: PROFIT(또는 익절)과 GROUP이 없는 라인은 패스
-                if ((!line.includes("PROFIT") && !line.includes("익절")) || !line.includes("GROUP")) return;
+                // 빠른 필터링: PROFIT 라인이 아니면 건너뜀 (성능 최적화)
+                if (!line.includes("PROFIT") || !line.includes("DCA")) return;
 
-                const match = this.pattern.exec(line);
+                const match = this.regex.exec(line);
                 if (match) {
-                    this.matches.push({
-                        group: match[1].trim(), // 그룹명 추출
-                        dca: parseInt(match[2]) // DCA 단계 추출
-                    });
-                }
-            }
+                    const groupName = match[1].trim();
+                    const dcaStep = parseInt(match[2]);
 
-            getResult() {
-                if (this.matches.length === 0) return null;
-                return {
-                    data: this.matches,
-                    count: this.matches.length
-                };
+                    // 전역 데이터에 즉시 집계 (원시 데이터 저장 안 함 -> 메모리 절약)
+                    if (!mergedGroupMap[groupName]) {
+                        mergedGroupMap[groupName] = {};
+                    }
+                    if (!mergedGroupMap[groupName][dcaStep]) {
+                        mergedGroupMap[groupName][dcaStep] = 0;
+                    }
+                    
+                    mergedGroupMap[groupName][dcaStep]++;
+                    
+                    // 통계 업데이트
+                    if (dcaStep > currentMaxDCA) currentMaxDCA = dcaStep;
+                    currentTotalProfitCount++;
+                    currentTotalDcaSum += dcaStep;
+                }
             }
         }
 
-        // [백엔드] 핵심 분석 함수 (Chunk 처리 + 메모리 보호)
-        async function analyzeFiles() {
-            const loadingDiv = document.getElementById('loading');
-            const loadingText = document.getElementById('loadingText');
-            
-            loadingDiv.style.display = 'block';
-            analysisData = {}; // 데이터 초기화
+        function analyzeFiles() {
+            // 초기화
+            mergedGroupMap = {};
+            currentMaxDCA = 0;
+            currentTotalProfitCount = 0;
+            currentTotalDcaSum = 0;
 
-            const files = selectedFiles;
+            const loading = document.getElementById('loading');
+            const progressText = document.getElementById('progressText');
+            loading.style.display = 'block';
             
-            // 재귀적 파일 처리 함수 (순차 처리로 메모리 안정성 확보)
+            let filesProcessed = 0;
+            const totalFiles = selectedFiles.length;
+
+            // 파일 순차 처리 함수
             const processNextFile = (fileIndex) => {
-                if (fileIndex >= files.length) {
+                if (fileIndex >= totalFiles) {
                     finishAnalysis();
                     return;
                 }
 
-                const file = files[fileIndex];
+                const file = selectedFiles[fileIndex];
                 const fileSize = file.size;
                 let offset = 0;
-                let chunkReader = new FileReader();
                 let leftover = "";
-                let parser = new StreamDCAParser();
+                let parser = new StreamDcaParser();
+                let chunkReader = new FileReader();
 
                 chunkReader.onload = function(e) {
                     const chunkText = e.target.result;
-                    e.target.result = null; // [중요] 읽은 원본 메모리 즉시 해제
-
                     let data = leftover + chunkText;
+                    e.target.result = null; // 메모리 해제 힌트
+
                     let lastNewlineIndex = 0;
                     let nextNewlineIndex = 0;
 
-                    // 라인 단위 수동 파싱 (split 사용 안 함)
+                    // 라인 단위 파싱
                     while ((nextNewlineIndex = data.indexOf('\n', lastNewlineIndex)) > -1) {
-                        // 문자열 강제 복사로 원본 참조 끊기 (V8 Memory Leak 방지)
-                        const rawLine = data.substring(lastNewlineIndex, nextNewlineIndex);
-                        const line = (' ' + rawLine).slice(1);
-
+                        const line = data.substring(lastNewlineIndex, nextNewlineIndex);
                         if (line.trim().length > 0) {
                             parser.parseLine(line);
                         }
                         lastNewlineIndex = nextNewlineIndex + 1;
                     }
 
-                    // 처리되지 않은 나머지 (마지막 줄) 저장
-                    leftover = (' ' + data.substring(lastNewlineIndex)).slice(1);
-                    data = null; // [중요] 처리된 데이터 변수 해제
+                    leftover = data.substring(lastNewlineIndex);
+                    data = null; // 메모리 해제 힌트
 
                     offset += CHUNK_SIZE;
-
-                    // 진행률 표시 업데이트 (기존 스피너 아래에 텍스트 추가)
+                    
+                    // 진행률 업데이트
                     const percent = Math.min(100, Math.round((offset / fileSize) * 100));
-                    loadingText.textContent = `분석 중... 파일 ${fileIndex + 1}/${files.length} (${percent}%)`;
+                    const totalPercent = Math.round(((fileIndex * 100) + percent) / totalFiles);
+                    progressText.innerText = `${totalPercent}% (파일 ${fileIndex + 1}/${totalFiles} 처리 중)`;
 
                     if (offset < fileSize) {
-                        // 0ms 딜레이로 스택 비우기 (GC 기회 제공)
+                        // 다음 청크 읽기 (UI 블로킹 방지를 위해 setTimeout 사용)
                         setTimeout(readNextChunk, 0);
                     } else {
                         // 파일 끝 처리
-                        if (leftover.trim().length > 0) parser.parseLine(leftover);
-                        
-                        // 결과 저장
-                        const result = parser.getResult();
-                        if (result) {
-                            analysisData[file.name] = result;
+                        if (leftover.trim().length > 0) {
+                            parser.parseLine(leftover);
                         }
-
-                        // 변수 명시적 초기화
+                        
+                        // 정리 후 다음 파일로
                         parser = null;
                         chunkReader = null;
                         leftover = null;
-
-                        // 다음 파일 처리 전 잠깐 대기 (브라우저 응답성 확보)
-                        setTimeout(() => processNextFile(fileIndex + 1), 300);
+                        filesProcessed++;
+                        setTimeout(() => processNextFile(fileIndex + 1), 10);
                     }
                 };
 
-                chunkReader.onerror = () => {
+                chunkReader.onerror = function() {
+                    console.error("Read Error", file.name);
                     showError(`${file.name} 읽기 실패`);
-                    processNextFile(fileIndex + 1); // 에러나도 다음 파일로 진행
+                    document.getElementById('loading').style.display = 'none';
                 };
 
-                const readNextChunk = () => {
+                function readNextChunk() {
                     const slice = file.slice(offset, offset + CHUNK_SIZE);
                     chunkReader.readAsText(slice, 'UTF-8');
-                };
+                }
 
-                // 첫 청크 시작
                 readNextChunk();
             };
 
-            // 분석 시작
+            // 첫 번째 파일 시작
             processNextFile(0);
         }
 
         function finishAnalysis() {
             document.getElementById('loading').style.display = 'none';
 
-            if (Object.keys(analysisData).length === 0) {
+            if (currentTotalProfitCount === 0) {
                 showError('분석할 수 있는 익절 데이터가 없습니다. 로그 파일 형식을 확인하세요.');
                 return;
             }
@@ -466,7 +717,9 @@
             showSuccess(`${selectedFiles.length}개 파일 분석 완료!`);
         }
 
-        // --- 기존 UI/로직 (색상 계산, 테이블 렌더링, 엑셀 다운로드) ---
+        // ==========================================
+        // 결과 렌더링 및 엑셀 (기존 코드 최적화)
+        // ==========================================
 
         function getCommonColor(value, minVal, maxVal) {
             if (value === 0) return { hex: 'CCCCCC', rgb: 'rgba(200, 200, 200, 0.3)' };
@@ -503,30 +756,16 @@
         }
 
         function renderResults() {
-            const allData = [];
-            for (const fileName in analysisData) {
-                allData.push(...analysisData[fileName].data);
-            }
-
-            const groupMap = {};
-            let maxDCA = 0;
-
-            allData.forEach(item => {
-                if (!groupMap[item.group]) groupMap[item.group] = {};
-                if (!groupMap[item.group][item.dca]) groupMap[item.group][item.dca] = 0;
-                groupMap[item.group][item.dca]++;
-                maxDCA = Math.max(maxDCA, item.dca);
-            });
-
-            currentMaxDCA = maxDCA;
-            currentGroupMap = groupMap;
-
-            const totalTakeProfit = allData.length;
+            const groupMap = mergedGroupMap; // 이미 집계된 맵 사용
+            const maxDCA = currentMaxDCA;
+            
             const totalGroups = Object.keys(groupMap).length;
-            const avgDCA = totalTakeProfit > 0 ? (allData.reduce((sum, item) => sum + item.dca, 0) / totalTakeProfit).toFixed(2) : 0;
+            const avgDCA = currentTotalProfitCount > 0 
+                ? (currentTotalDcaSum / currentTotalProfitCount).toFixed(2) 
+                : 0;
 
-            document.getElementById('totalTakeProfit').textContent = totalTakeProfit;
-            document.getElementById('totalGroups').textContent = totalGroups;
+            document.getElementById('totalTakeProfit').textContent = currentTotalProfitCount.toLocaleString();
+            document.getElementById('totalGroups').textContent = totalGroups.toLocaleString();
             document.getElementById('maxDCAStep').textContent = maxDCA;
             document.getElementById('avgDCAStep').textContent = avgDCA;
 
@@ -557,6 +796,7 @@
 
             const allValues = [];
             const rows = [];
+            
             for (const group in groupMap) {
                 let rowTotal = 0;
                 const rowData = [];
@@ -570,8 +810,11 @@
             }
             rows.sort((a, b) => b.total - a.total);
 
-            const minVal = Math.min(...allValues);
-            const maxVal = Math.max(...allValues);
+            const minVal = allValues.length > 0 ? Math.min(...allValues) : 0;
+            const maxVal = allValues.length > 0 ? Math.max(...allValues) : 0;
+
+            // DOM 렌더링 최적화를 위해 Fragment 사용
+            const fragment = document.createDocumentFragment();
 
             rows.forEach(row => {
                 const tr = document.createElement('tr');
@@ -598,12 +841,14 @@
                 tdTotal.style.backgroundColor = '#f0f0f0';
                 tdTotal.textContent = row.total;
                 tr.appendChild(tdTotal);
-                tbody.appendChild(tr);
+                fragment.appendChild(tr);
             });
+
+            tbody.appendChild(fragment);
         }
 
         async function exportToExcel() {
-            if (Object.keys(currentGroupMap).length === 0) {
+            if (Object.keys(mergedGroupMap).length === 0) {
                 showError('내보낼 데이터가 없습니다.');
                 return;
             }
@@ -612,12 +857,14 @@
                 const workbook = new ExcelJS.Workbook();
                 const worksheet = workbook.addWorksheet('DCA Summary');
 
+                // 헤더 구성
                 const headers = ['그룹명'];
                 for (let i = 0; i <= currentMaxDCA; i++) {
                     headers.push(`${i} DCA`);
                 }
                 headers.push('Total');
 
+                // 헤더 추가
                 const headerRow = worksheet.addRow(headers);
                 headerRow.eachCell((cell) => {
                     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
@@ -629,13 +876,14 @@
                     };
                 });
 
+                // 데이터 준비 및 정렬
                 const allValues = [];
                 const rows = [];
-                for (const group in currentGroupMap) {
+                for (const group in mergedGroupMap) {
                     let rowTotal = 0;
                     const rowData = [];
                     for (let i = 0; i <= currentMaxDCA; i++) {
-                        const value = currentGroupMap[group][i] || 0;
+                        const value = mergedGroupMap[group][i] || 0;
                         rowData.push(value);
                         rowTotal += value;
                         if (value > 0) allValues.push(value);
@@ -644,9 +892,10 @@
                 }
                 rows.sort((a, b) => b.total - a.total);
 
-                const minVal = Math.min(...allValues);
-                const maxVal = Math.max(...allValues);
+                const minVal = allValues.length > 0 ? Math.min(...allValues) : 0;
+                const maxVal = allValues.length > 0 ? Math.max(...allValues) : 0;
 
+                // 엑셀 행 추가
                 rows.forEach(rowData => {
                     const rowValues = [rowData.group, ...rowData.data, rowData.total];
                     const row = worksheet.addRow(rowValues);
@@ -658,11 +907,14 @@
                         };
                         cell.alignment = { vertical: 'middle', horizontal: 'center' };
 
+                        // 1. 그룹명
                         if (colNumber === 1) {
                             cell.font = { bold: true };
                             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9F9F9' } };
                             cell.alignment = { vertical: 'middle', horizontal: 'left' };
-                        } else if (colNumber > 1 && colNumber <= headers.length - 1) {
+                        } 
+                        // 2. 익절 횟수 (히트맵)
+                        else if (colNumber > 1 && colNumber <= headers.length - 1) {
                             const val = cell.value;
                             if (val > 0) {
                                 const color = getCommonColor(val, minVal, maxVal);
@@ -672,14 +924,17 @@
                                 cell.value = '-';
                                 cell.font = { color: { argb: 'FFCCCCCC' } };
                             }
-                        } else if (colNumber === headers.length) {
+                        }
+                        // 3. Total
+                        else if (colNumber === headers.length) {
                             cell.font = { bold: true };
                             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0F0' } };
                         }
                     });
                 });
 
-                worksheet.columns.forEach((column, i) => {
+                // 열 너비 자동 조절
+                worksheet.columns.forEach((column) => {
                     let maxLength = 0;
                     column.eachCell({ includeEmpty: true }, (cell) => {
                         const columnLength = cell.value ? cell.value.toString().length : 10;
@@ -699,7 +954,7 @@
 
                 showSuccess('Excel 파일이 다운로드되었습니다!');
             } catch (error) {
-                console.error('Excel 내보내기 오류:', error);
+                console.error('Excel Export Error:', error);
                 showError('Excel 내보내기 중 오류가 발생했습니다.');
             }
         }

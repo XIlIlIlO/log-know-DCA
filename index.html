@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DCA Trading Analysis - Log Parser (Large File Support)</title>
+    <title>DCA Trading Analysis - Log Parser (Deep Fix)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
@@ -482,13 +482,12 @@
 
     <script>
         let selectedFiles = [];
-        let mergedGroupMap = {}; // 모든 파일의 통합 데이터
+        let mergedGroupMap = {}; 
         let currentMaxDCA = 0;
         let currentTotalProfitCount = 0;
         let currentTotalDcaSum = 0;
         
-        // 메모리 관리를 위한 설정
-        const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB 단위로 읽기
+        const CHUNK_SIZE = 5 * 1024 * 1024; 
 
         // ==========================================
         // UI 이벤트 핸들링
@@ -577,20 +576,17 @@
         }
 
         // ==========================================
-        // 핵심 로직 변경: 정규식 및 파싱 로직 최적화
+        // 핵심 로직 수정: 로그 병합(Merging) 방지
         // ==========================================
         
         class StreamDcaParser {
             constructor() {
-                // 수정된 정규식 설명:
-                // 1. (?:□|^|[\r\n]|\s*) : □ 문자가 없어도 되도록, 혹은 줄바꿈이나 공백 이후 PROFIT을 찾도록 유연화
-                // 2. PROFIT : 키워드 찾기
-                // 3. GROUP\s*:\s*(.*?) : 그룹명을 잡되...
-                // 4. (?:\s+-\s+|$) : 그룹명 뒤에 " - "가 오거나, 혹은 그 줄이 끝나거나 다른 패턴이 시작되면 끊음 (탐욕적 매칭 방지)
-                // 5. DCA\s*:\s*(\d+) : DCA 단계 추출
-                
-                // 주의: [\s\S]*?는 여전히 사용하지만, GROUP명 매칭 조건을 강화하여 다음 로그로 넘어가는 것을 방지함.
-                this.regex = /PROFIT\s+\[.*?\][\s\S]*?-\s*GROUP\s*:\s*(.*?)(?:\s+-\s+|[\r\n])[\s\S]*?-\s*DCA\s*:\s*(\d+)/g;
+                // 수정된 정규식 설명 (매우 중요):
+                // 1. PROFIT으로 시작
+                // 2. (?:(?!PROFIT)[\s\S])*? 
+                //    -> 이 부분이 핵심입니다. "PROFIT이라는 단어가 아닌 것"들만 매칭합니다.
+                //    -> 즉, 다음 로그(PROFIT)가 나오기 전까지만 검색하도록 강제하여, 두 로그가 하나로 합쳐지는 것을 방지합니다.
+                this.regex = /PROFIT\s+\[.*?\](?:(?!PROFIT)[\s\S])*?-\s*GROUP\s*:\s*(.*?)(?:\s+-\s+|[\r\n])(?:(?!PROFIT)[\s\S])*?-\s*DCA\s*:\s*(\d+)/g;
                 this.buffer = "";
             }
 
@@ -606,7 +602,6 @@
                     const groupName = match[1].trim();
                     const dcaStep = parseInt(match[2]);
 
-                    // 데이터 집계
                     if (!mergedGroupMap[groupName]) {
                         mergedGroupMap[groupName] = {};
                     }
@@ -623,20 +618,17 @@
                     lastIndex = this.regex.lastIndex;
                 }
 
-                // 메모리 관리: 처리된 부분 잘라내기
-                // 단, 마지막 매칭 지점이 버퍼 끝과 너무 가까우면(잘린 토큰 가능성) 남겨야 하지만,
-                // 기본적으로 lastIndex 기준 잘라내도 안전함 (DCA 숫자까지 다 읽었으므로)
+                // 처리된 부분 잘라내기
                 if (lastIndex > 0) {
                     this.buffer = this.buffer.slice(lastIndex);
                 }
                 
-                // 버퍼가 너무 커지는 것을 방지 (10MB 이상 쌓이면 강제 정리 - 비정상 패턴 대비)
+                // 비정상적으로 버퍼가 커질 경우 강제 정리 (무한 루프 방지)
                 if (this.buffer.length > 10 * 1024 * 1024) {
                    const lastProfit = this.buffer.lastIndexOf("PROFIT");
                    if (lastProfit > -1) {
                        this.buffer = this.buffer.slice(lastProfit);
                    } else {
-                       // PROFIT도 없으면 그냥 날림
                        this.buffer = ""; 
                    }
                 }
@@ -644,7 +636,6 @@
         }
 
         function analyzeFiles() {
-            // 초기화
             mergedGroupMap = {};
             currentMaxDCA = 0;
             currentTotalProfitCount = 0;
@@ -672,10 +663,9 @@
 
                 chunkReader.onload = function(e) {
                     const chunkText = e.target.result;
-                    
                     parser.processChunk(chunkText);
-                    
                     e.target.result = null; 
+                    
                     offset += CHUNK_SIZE;
                     
                     const percent = Math.min(100, Math.round((offset / fileSize) * 100));
@@ -720,10 +710,6 @@
             renderResults();
             showSuccess(`${selectedFiles.length}개 파일 분석 완료!`);
         }
-
-        // ==========================================
-        // 결과 렌더링 및 엑셀
-        // ==========================================
 
         function getCommonColor(value, minVal, maxVal) {
             if (value === 0) return { hex: 'CCCCCC', rgb: 'rgba(200, 200, 200, 0.3)' };

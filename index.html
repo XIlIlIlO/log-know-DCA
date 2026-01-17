@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DCA Trading Analysis - Log Parser</title>
+    <title>DCA Trading Analysis - Log Parser (Large File Support)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
@@ -348,6 +348,13 @@
             margin: 0 auto 15px;
         }
 
+        .progress-text {
+            margin-top: 10px;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--color-primary);
+        }
+
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
@@ -392,13 +399,13 @@
     <div class="container">
         <header>
             <h1>📊 DCA Trading Analysis</h1>
-            <p class="subtitle">Log 파일을 업로드하여 DCA 익절 현황을 분석하세요</p>
+            <p class="subtitle">Log 파일을 업로드하여 DCA 익절 현황을 분석하세요 (대용량 지원)</p>
         </header>
 
         <div class="upload-section" id="uploadSection">
             <div class="upload-icon">📁</div>
             <div class="upload-text">여기에 파일을 드래그하거나 클릭하여 업로드</div>
-            <div class="upload-hint">지원 형식: .log, .txt (여러 파일 동시 업로드 가능)</div>
+            <div class="upload-hint">지원 형식: .log, .txt (대용량 파일 지원)</div>
             <button class="btn btn-primary" id="selectFileBtn">
                 파일 선택
             </button>
@@ -416,6 +423,7 @@
         <div class="loading" id="loading">
             <div class="spinner"></div>
             <p>데이터 분석 중...</p>
+            <div class="progress-text" id="progressText">0%</div>
         </div>
 
         <div class="results-section" id="resultsSection">
@@ -474,10 +482,17 @@
 
     <script>
         let selectedFiles = [];
-        let analysisData = {};
+        let mergedGroupMap = {}; // 모든 파일의 통합 데이터 { "GroupA": { 0: 5, 1: 2 }, ... }
         let currentMaxDCA = 0;
-        let currentGroupMap = {};
+        let currentTotalProfitCount = 0;
+        let currentTotalDcaSum = 0;
+        
+        // 메모리 관리를 위한 설정
+        const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB 단위로 읽기
 
+        // ==========================================
+        // UI 이벤트 핸들링 (기존 코드 유지)
+        // ==========================================
         const uploadSection = document.getElementById('uploadSection');
         const fileInput = document.getElementById('fileInput');
         const selectFileBtn = document.getElementById('selectFileBtn');
@@ -508,6 +523,7 @@
             updateFileList();
 
             if (selectedFiles.length > 0) {
+                // UI 렌더링 후 분석 시작
                 setTimeout(() => {
                     analyzeFiles();
                 }, 300);
@@ -528,7 +544,7 @@
                 <div class="file-item">
                     <div>
                         <div class="file-name">${file.name}</div>
-                        <div class="file-size">${(file.size / 1024).toFixed(2)} KB</div>
+                        <div class="file-size">${(file.size / 1024 / 1024).toFixed(2)} MB</div>
                     </div>
                     <div class="remove-file" onclick="removeFile(${index})">제거</div>
                 </div>
@@ -561,103 +577,150 @@
             }, 3000);
         }
 
-        async function analyzeFiles() {
-            document.getElementById('loading').style.display = 'block';
-            analysisData = {};
+        // ==========================================
+        // 핵심 로직 변경: 대용량 스트림 파서
+        // ==========================================
+        
+        // DCA 데이터만 추출하는 경량 파서 클래스
+        class StreamDcaParser {
+            constructor() {
+                this.regex = /□\s+PROFIT\s+\[.*?\].*?\r?\n\r?\n-\s*GROUP\s*:\s*(.*?)-\s*\r?\n-\s*DCA\s*:\s*(\d+)\/\d+/g;
+            }
 
-            try {
-                for (const file of selectedFiles) {
-                    const result = await parseLogFileStreaming(file);
-                    if (result) {
-                        analysisData[file.name] = result;
+            parseLine(line) {
+                // 빠른 필터링: PROFIT 라인이 아니면 건너뜀 (성능 최적화)
+                if (!line.includes("PROFIT") || !line.includes("DCA")) return;
+
+                const match = this.regex.exec(line);
+                if (match) {
+                    const groupName = match[1].trim();
+                    const dcaStep = parseInt(match[2]);
+
+                    // 전역 데이터에 즉시 집계 (원시 데이터 저장 안 함 -> 메모리 절약)
+                    if (!mergedGroupMap[groupName]) {
+                        mergedGroupMap[groupName] = {};
                     }
+                    if (!mergedGroupMap[groupName][dcaStep]) {
+                        mergedGroupMap[groupName][dcaStep] = 0;
+                    }
+                    
+                    mergedGroupMap[groupName][dcaStep]++;
+                    
+                    // 통계 업데이트
+                    if (dcaStep > currentMaxDCA) currentMaxDCA = dcaStep;
+                    currentTotalProfitCount++;
+                    currentTotalDcaSum += dcaStep;
                 }
-
-                if (Object.keys(analysisData).length === 0) {
-                    throw new Error('분석할 수 있는 익절 데이터가 없습니다. 로그 파일 형식을 확인하세요.');
-                }
-
-                renderResults();
-                showSuccess(`${selectedFiles.length}개 파일 분석 완료!`);
-                document.getElementById('loading').style.display = 'none';
-            } catch (error) {
-                showError(error.message);
-                document.getElementById('loading').style.display = 'none';
             }
         }
 
-        // ✅ 메모리 효율적인 스트리밍 파싱 함수
-        async function parseLogFileStreaming(file) {
-            const CHUNK_SIZE = 64 * 1024; // 64KB 청크
-            const decoder = new TextDecoder();
-            let buffer = '';
-            let offset = 0;
-            const matches = [];
-            const pattern = /□\s+PROFIT\s+\[.*?\].*?\r?\n\r?\n-\s*GROUP\s*:\s*(.*?)-\s*\r?\n-\s*DCA\s*:\s*(\d+)/g;
+        function analyzeFiles() {
+            // 초기화
+            mergedGroupMap = {};
+            currentMaxDCA = 0;
+            currentTotalProfitCount = 0;
+            currentTotalDcaSum = 0;
 
-            try {
-                while (offset < file.size) {
-                    const chunk = file.slice(offset, offset + CHUNK_SIZE);
-                    const arrayBuffer = await chunk.arrayBuffer();
-                    const text = decoder.decode(arrayBuffer, { stream: true });
-                    
-                    buffer += text;
-                    
-                    // 마지막 개행까지만 처리 (불완전한 라인 제외)
-                    const lastNewlineIndex = buffer.lastIndexOf('\n');
-                    if (lastNewlineIndex === -1) {
-                        offset += CHUNK_SIZE;
-                        continue;
+            const loading = document.getElementById('loading');
+            const progressText = document.getElementById('progressText');
+            loading.style.display = 'block';
+            
+            let filesProcessed = 0;
+            const totalFiles = selectedFiles.length;
+
+            // 파일 순차 처리 함수
+            const processNextFile = (fileIndex) => {
+                if (fileIndex >= totalFiles) {
+                    finishAnalysis();
+                    return;
+                }
+
+                const file = selectedFiles[fileIndex];
+                const fileSize = file.size;
+                let offset = 0;
+                let leftover = "";
+                let parser = new StreamDcaParser();
+                let chunkReader = new FileReader();
+
+                chunkReader.onload = function(e) {
+                    const chunkText = e.target.result;
+                    let data = leftover + chunkText;
+                    e.target.result = null; // 메모리 해제 힌트
+
+                    let lastNewlineIndex = 0;
+                    let nextNewlineIndex = 0;
+
+                    // 라인 단위 파싱
+                    while ((nextNewlineIndex = data.indexOf('\n', lastNewlineIndex)) > -1) {
+                        const line = data.substring(lastNewlineIndex, nextNewlineIndex);
+                        if (line.trim().length > 0) {
+                            parser.parseLine(line);
+                        }
+                        lastNewlineIndex = nextNewlineIndex + 1;
                     }
 
-                    const processingBuffer = buffer.substring(0, lastNewlineIndex);
-                    buffer = buffer.substring(lastNewlineIndex + 1);
+                    leftover = data.substring(lastNewlineIndex);
+                    data = null; // 메모리 해제 힌트
 
-                    // 청크에서 패턴 매칭
-                    let match;
-                    while ((match = pattern.exec(processingBuffer)) !== null) {
-                        matches.push({
-                            group: match[1].trim(),
-                            dca: parseInt(match[2])
-                        });
-                    }
-
-                    // 메모리 정리
-                    pattern.lastIndex = 0;
                     offset += CHUNK_SIZE;
+                    
+                    // 진행률 업데이트
+                    const percent = Math.min(100, Math.round((offset / fileSize) * 100));
+                    const totalPercent = Math.round(((fileIndex * 100) + percent) / totalFiles);
+                    progressText.innerText = `${totalPercent}% (파일 ${fileIndex + 1}/${totalFiles} 처리 중)`;
 
-                    // 가비지 컬렉션 힌트
-                    if (matches.length % 1000 === 0) {
-                        await new Promise(resolve => setTimeout(resolve, 0));
+                    if (offset < fileSize) {
+                        // 다음 청크 읽기 (UI 블로킹 방지를 위해 setTimeout 사용)
+                        setTimeout(readNextChunk, 0);
+                    } else {
+                        // 파일 끝 처리
+                        if (leftover.trim().length > 0) {
+                            parser.parseLine(leftover);
+                        }
+                        
+                        // 정리 후 다음 파일로
+                        parser = null;
+                        chunkReader = null;
+                        leftover = null;
+                        filesProcessed++;
+                        setTimeout(() => processNextFile(fileIndex + 1), 10);
                     }
-                }
-
-                // 마지막 버퍼 처리
-                if (buffer.length > 0) {
-                    let match;
-                    while ((match = pattern.exec(buffer)) !== null) {
-                        matches.push({
-                            group: match[1].trim(),
-                            dca: parseInt(match[2])
-                        });
-                    }
-                }
-
-                if (matches.length === 0) {
-                    return null;
-                }
-
-                return {
-                    data: matches,
-                    count: matches.length
                 };
-            } catch (error) {
-                console.error('파일 파싱 오류:', error);
-                return null;
-            }
+
+                chunkReader.onerror = function() {
+                    console.error("Read Error", file.name);
+                    showError(`${file.name} 읽기 실패`);
+                    document.getElementById('loading').style.display = 'none';
+                };
+
+                function readNextChunk() {
+                    const slice = file.slice(offset, offset + CHUNK_SIZE);
+                    chunkReader.readAsText(slice, 'UTF-8');
+                }
+
+                readNextChunk();
+            };
+
+            // 첫 번째 파일 시작
+            processNextFile(0);
         }
 
-        // 공통 색상 계산 함수 (웹과 엑셀에서 동일하게 사용)
+        function finishAnalysis() {
+            document.getElementById('loading').style.display = 'none';
+
+            if (currentTotalProfitCount === 0) {
+                showError('분석할 수 있는 익절 데이터가 없습니다. 로그 파일 형식을 확인하세요.');
+                return;
+            }
+
+            renderResults();
+            showSuccess(`${selectedFiles.length}개 파일 분석 완료!`);
+        }
+
+        // ==========================================
+        // 결과 렌더링 및 엑셀 (기존 코드 최적화)
+        // ==========================================
+
         function getCommonColor(value, minVal, maxVal) {
             if (value === 0) return { hex: 'CCCCCC', rgb: 'rgba(200, 200, 200, 0.3)' };
             if (minVal === maxVal) return { hex: 'EF5350', rgb: '#ef5350' };
@@ -693,30 +756,16 @@
         }
 
         function renderResults() {
-            const allData = [];
-            for (const fileName in analysisData) {
-                allData.push(...analysisData[fileName].data);
-            }
-
-            const groupMap = {};
-            let maxDCA = 0;
-
-            allData.forEach(item => {
-                if (!groupMap[item.group]) groupMap[item.group] = {};
-                if (!groupMap[item.group][item.dca]) groupMap[item.group][item.dca] = 0;
-                groupMap[item.group][item.dca]++;
-                maxDCA = Math.max(maxDCA, item.dca);
-            });
-
-            currentMaxDCA = maxDCA;
-            currentGroupMap = groupMap;
-
-            const totalTakeProfit = allData.length;
+            const groupMap = mergedGroupMap; // 이미 집계된 맵 사용
+            const maxDCA = currentMaxDCA;
+            
             const totalGroups = Object.keys(groupMap).length;
-            const avgDCA = (allData.reduce((sum, item) => sum + item.dca, 0) / totalTakeProfit).toFixed(2);
+            const avgDCA = currentTotalProfitCount > 0 
+                ? (currentTotalDcaSum / currentTotalProfitCount).toFixed(2) 
+                : 0;
 
-            document.getElementById('totalTakeProfit').textContent = totalTakeProfit;
-            document.getElementById('totalGroups').textContent = totalGroups;
+            document.getElementById('totalTakeProfit').textContent = currentTotalProfitCount.toLocaleString();
+            document.getElementById('totalGroups').textContent = totalGroups.toLocaleString();
             document.getElementById('maxDCAStep').textContent = maxDCA;
             document.getElementById('avgDCAStep').textContent = avgDCA;
 
@@ -747,6 +796,7 @@
 
             const allValues = [];
             const rows = [];
+            
             for (const group in groupMap) {
                 let rowTotal = 0;
                 const rowData = [];
@@ -760,8 +810,11 @@
             }
             rows.sort((a, b) => b.total - a.total);
 
-            const minVal = Math.min(...allValues);
-            const maxVal = Math.max(...allValues);
+            const minVal = allValues.length > 0 ? Math.min(...allValues) : 0;
+            const maxVal = allValues.length > 0 ? Math.max(...allValues) : 0;
+
+            // DOM 렌더링 최적화를 위해 Fragment 사용
+            const fragment = document.createDocumentFragment();
 
             rows.forEach(row => {
                 const tr = document.createElement('tr');
@@ -788,12 +841,14 @@
                 tdTotal.style.backgroundColor = '#f0f0f0';
                 tdTotal.textContent = row.total;
                 tr.appendChild(tdTotal);
-                tbody.appendChild(tr);
+                fragment.appendChild(tr);
             });
+
+            tbody.appendChild(fragment);
         }
 
         async function exportToExcel() {
-            if (Object.keys(currentGroupMap).length === 0) {
+            if (Object.keys(mergedGroupMap).length === 0) {
                 showError('내보낼 데이터가 없습니다.');
                 return;
             }
@@ -802,12 +857,14 @@
                 const workbook = new ExcelJS.Workbook();
                 const worksheet = workbook.addWorksheet('DCA Summary');
 
+                // 헤더 구성
                 const headers = ['그룹명'];
                 for (let i = 0; i <= currentMaxDCA; i++) {
                     headers.push(`${i} DCA`);
                 }
                 headers.push('Total');
 
+                // 헤더 추가
                 const headerRow = worksheet.addRow(headers);
                 headerRow.eachCell((cell) => {
                     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
@@ -819,13 +876,14 @@
                     };
                 });
 
+                // 데이터 준비 및 정렬
                 const allValues = [];
                 const rows = [];
-                for (const group in currentGroupMap) {
+                for (const group in mergedGroupMap) {
                     let rowTotal = 0;
                     const rowData = [];
                     for (let i = 0; i <= currentMaxDCA; i++) {
-                        const value = currentGroupMap[group][i] || 0;
+                        const value = mergedGroupMap[group][i] || 0;
                         rowData.push(value);
                         rowTotal += value;
                         if (value > 0) allValues.push(value);
@@ -834,9 +892,10 @@
                 }
                 rows.sort((a, b) => b.total - a.total);
 
-                const minVal = Math.min(...allValues);
-                const maxVal = Math.max(...allValues);
+                const minVal = allValues.length > 0 ? Math.min(...allValues) : 0;
+                const maxVal = allValues.length > 0 ? Math.max(...allValues) : 0;
 
+                // 엑셀 행 추가
                 rows.forEach(rowData => {
                     const rowValues = [rowData.group, ...rowData.data, rowData.total];
                     const row = worksheet.addRow(rowValues);
@@ -848,11 +907,13 @@
                         };
                         cell.alignment = { vertical: 'middle', horizontal: 'center' };
 
+                        // 1. 그룹명
                         if (colNumber === 1) {
                             cell.font = { bold: true };
                             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9F9F9' } };
                             cell.alignment = { vertical: 'middle', horizontal: 'left' };
                         } 
+                        // 2. 익절 횟수 (히트맵)
                         else if (colNumber > 1 && colNumber <= headers.length - 1) {
                             const val = cell.value;
                             if (val > 0) {
@@ -864,6 +925,7 @@
                                 cell.font = { color: { argb: 'FFCCCCCC' } };
                             }
                         }
+                        // 3. Total
                         else if (colNumber === headers.length) {
                             cell.font = { bold: true };
                             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0F0' } };
@@ -871,7 +933,8 @@
                     });
                 });
 
-                worksheet.columns.forEach((column, i) => {
+                // 열 너비 자동 조절
+                worksheet.columns.forEach((column) => {
                     let maxLength = 0;
                     column.eachCell({ includeEmpty: true }, (cell) => {
                         const columnLength = cell.value ? cell.value.toString().length : 10;
@@ -891,7 +954,7 @@
 
                 showSuccess('Excel 파일이 다운로드되었습니다!');
             } catch (error) {
-                console.error('Excel 내보내기 오류:', error);
+                console.error('Excel Export Error:', error);
                 showError('Excel 내보내기 중 오류가 발생했습니다.');
             }
         }

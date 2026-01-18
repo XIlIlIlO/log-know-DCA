@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DCA Trading Analysis - Log Parser (Deep Fix v2)</title>
+    <title>DCA Trading Analysis - Log Parser (Deep Fix v3)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
@@ -583,18 +583,18 @@
         }
 
         // ==========================================
-        // 핵심 로직: DCA + 손절 데이터 파싱
+        // 핵심 로직: DCA + 손절 데이터 파싱 (v3)
         // ==========================================
         
         class StreamDcaParser {
             constructor() {
-                // DCA 익절 파싱 (기존 유지)
+                // DCA 익절 파싱
                 this.regex = /PROFIT\s+\[.*?\](?:(?!PROFIT)[\s\S])*?-\s*GROUP\s*:\s*(.*?)(?:\s+-\s+|[\r\n])(?:(?!PROFIT)[\s\S])*?-\s*DCA\s*:\s*(\d+)/g;
                 
-                // [수정됨] 손절 파싱 정규식
-                // - Group Name과 총 손절 회수를 대소문자 구분 없이(i 플래그), 
-                // - 중간에 어떤 문자가 와도 매칭되도록 유연하게 수정
-                this.stopLossRegex = /-\s*Group\s*Name\s*:\s*(.*?)\s*(?:[\r\n])[\s\S]*?-\s*총\s*손절\s*회수\s*:\s*(\d+)/gi;
+                // [수정됨 v3] Backtest Report 파싱
+                // 형식: "Backtest Report - Group Name [그룹명] - ... - [익절] - [손절] - ..."
+                // 정규식: Group Name 추출 후, 그 다음 숫자 두 개를 찾기
+                this.backtestRegex = /Backtest Report\s+-\s+Group Name\s+(.*?)\s+-.*?-\s+(\d+)\s+-\s+(\d+)\s+-/gi;
                 
                 this.buffer = "";
             }
@@ -634,14 +634,14 @@
                     this.buffer = this.buffer.slice(lastIndex);
                 }
 
-                // ===== 손절 횟수 처리 (수정된 로직) =====
-                let stopMatch;
-                let stopLastIndex = 0;
-                this.stopLossRegex.lastIndex = 0;
+                // ===== Backtest Report 손절 처리 (v3) =====
+                let btMatch;
+                this.backtestRegex.lastIndex = 0;
 
-                while ((stopMatch = this.stopLossRegex.exec(this.buffer)) !== null) {
-                    const groupName = stopMatch[1].trim();
-                    const stopLossCount = parseInt(stopMatch[2]);
+                while ((btMatch = this.backtestRegex.exec(this.buffer)) !== null) {
+                    const groupName = btMatch[1].trim();
+                    const profitCount = parseInt(btMatch[2]);
+                    const stopLossCount = parseInt(btMatch[3]);
 
                     if (!mergedGroupMap[groupName]) {
                         mergedGroupMap[groupName] = {
@@ -650,25 +650,18 @@
                         };
                     }
                     
-                    // 기존 값보다 크거나 0이 아닐 때 업데이트 (최신 값 반영)
-                    if (stopLossCount > 0 || mergedGroupMap[groupName].stopLoss === 0) {
-                        mergedGroupMap[groupName].stopLoss = stopLossCount;
-                    }
-                    
-                    stopLastIndex = this.stopLossRegex.lastIndex;
+                    // 손절 횟수 저장 (Backtest Report에서 추출한 값 사용)
+                    mergedGroupMap[groupName].stopLoss = stopLossCount;
                 }
 
-                // 손절 매칭은 buffer를 너무 잘라내면 안될 수도 있으나, 
-                // 메모리 관리를 위해 마지막 매칭 지점까지 잘라냄 (단, DCA 파싱과 충돌 방지를 위해 보수적 접근 필요)
-                // 여기서는 DCA 파싱이 주된 buffer slicing 주도권을 가지므로,
-                // 손절 파싱 후에는 별도로 슬라이싱하지 않고 DCA 루프에서 처리되도록 둠.
-                // 다만, 버퍼가 너무 커지는 것을 방지하기 위한 강제 정리 로직은 아래에 유지.
-                
-                // 비정상적으로 버퍼가 커질 경우 강제 정리 (무한 루프 방지)
+                // 버퍼 크기 관리
                 if (this.buffer.length > 10 * 1024 * 1024) {
                    const lastProfit = this.buffer.lastIndexOf("PROFIT");
-                   if (lastProfit > -1) {
-                       this.buffer = this.buffer.slice(lastProfit);
+                   const lastBacktest = this.buffer.lastIndexOf("Backtest");
+                   const keepPoint = Math.max(lastProfit, lastBacktest);
+                   
+                   if (keepPoint > -1) {
+                       this.buffer = this.buffer.slice(keepPoint);
                    } else {
                        this.buffer = ""; 
                    }
@@ -938,9 +931,8 @@
                 const minVal = allValues.length > 0 ? Math.min(...allValues) : 0;
                 const maxVal = allValues.length > 0 ? Math.max(...allValues) : 0;
 
-                // [수정됨] 컬럼 인덱스 계산 (ExcelJS는 1부터 시작)
-                const totalColIndex = headers.length - 1; // 'Total' 컬럼
-                const stopLossColIndex = headers.length;    // '손절' 컬럼
+                const totalColIndex = headers.length - 1;
+                const stopLossColIndex = headers.length;
 
                 rows.forEach(rowData => {
                     const rowValues = [
@@ -958,14 +950,11 @@
                         };
                         cell.alignment = { vertical: 'middle', horizontal: 'center' };
 
-                        // 1. 그룹명 컬럼
                         if (colNumber === 1) {
                             cell.font = { bold: true };
                             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9F9F9' } };
                             cell.alignment = { vertical: 'middle', horizontal: 'left' };
                         } 
-                        // 2. DCA 데이터 컬럼 (Total, 손절 제외)
-                        // [수정됨] colNumber 범위를 Total 컬럼 전까지만 적용하도록 수정
                         else if (colNumber > 1 && colNumber < totalColIndex) {
                             const val = cell.value;
                             if (val > 0) {
@@ -977,13 +966,10 @@
                                 cell.font = { color: { argb: 'FFCCCCCC' } };
                             }
                         }
-                        // 3. [수정됨] Total 컬럼 (회색 고정)
                         else if (colNumber === totalColIndex) {
                             cell.font = { bold: true };
-                            // 밝은 회색 배경 지정
                             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0F0' } };
                         }
-                        // 4. 손절 컬럼 (주황색)
                         else if (colNumber === stopLossColIndex) {
                             cell.font = { bold: true, color: { argb: 'FFE65100' } };
                             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3E0' } };

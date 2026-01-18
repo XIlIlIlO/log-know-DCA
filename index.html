@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DCA Trading Analysis - Log Parser (Deep Fix)</title>
+    <title>DCA Trading Analysis - Log Parser (Deep Fix + StopLoss)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
@@ -16,6 +16,7 @@
             --color-primary: #2196F3;
             --color-success: #4caf50;
             --color-error: #f44336;
+            --color-sl: #e91e63; /* 손절 표시용 색상 */
         }
 
         * {
@@ -227,6 +228,10 @@
             color: var(--color-primary);
         }
 
+        .stat-value.sl-value {
+            color: var(--color-sl);
+        }
+
         .table-container {
             overflow-x: auto;
             border-radius: 6px;
@@ -399,7 +404,7 @@
     <div class="container">
         <header>
             <h1>📊 DCA Trading Analysis</h1>
-            <p class="subtitle">Log 파일을 업로드하여 DCA 익절 현황을 분석하세요 (대용량 지원)</p>
+            <p class="subtitle">Log 파일을 업로드하여 DCA 익절 및 손절 현황을 분석하세요 (대용량 지원)</p>
         </header>
 
         <div class="upload-section" id="uploadSection">
@@ -440,12 +445,12 @@
                     <div class="stat-value" id="totalTakeProfit">0</div>
                 </div>
                 <div class="stat-item">
-                    <div class="stat-label">총 그룹 수</div>
-                    <div class="stat-value" id="totalGroups">0</div>
+                    <div class="stat-label">총 손절 횟수</div>
+                    <div class="stat-value sl-value" id="totalStopLoss">0</div>
                 </div>
                 <div class="stat-item">
-                    <div class="stat-label">최대 DCA 단계</div>
-                    <div class="stat-value" id="maxDCAStep">0</div>
+                    <div class="stat-label">총 그룹 수</div>
+                    <div class="stat-value" id="totalGroups">0</div>
                 </div>
                 <div class="stat-item">
                     <div class="stat-label">평균 DCA 단계</div>
@@ -463,7 +468,7 @@
             </div>
 
             <div class="color-legend">
-                <div class="legend-title">색상 범례 (로그함수 기반 그래디언트)</div>
+                <div class="legend-title">색상 범례 (익절 횟수 기반)</div>
                 <div class="legend-bar"></div>
                 <div class="legend-labels">
                     <span>최소</span>
@@ -483,8 +488,10 @@
     <script>
         let selectedFiles = [];
         let mergedGroupMap = {}; 
+        let mergedStopLossMap = {}; // 손절 데이터 저장용 맵
         let currentMaxDCA = 0;
         let currentTotalProfitCount = 0;
+        let currentTotalStopLossCount = 0;
         let currentTotalDcaSum = 0;
         
         const CHUNK_SIZE = 5 * 1024 * 1024; 
@@ -576,29 +583,31 @@
         }
 
         // ==========================================
-        // 핵심 로직 수정: 로그 병합(Merging) 방지
+        // 핵심 로직 수정: 로그 파싱 (손절 포함)
         // ==========================================
         
         class StreamDcaParser {
             constructor() {
-                // 수정된 정규식 설명 (매우 중요):
-                // 1. PROFIT으로 시작
-                // 2. (?:(?!PROFIT)[\s\S])*? 
-                //    -> 이 부분이 핵심입니다. "PROFIT이라는 단어가 아닌 것"들만 매칭합니다.
-                //    -> 즉, 다음 로그(PROFIT)가 나오기 전까지만 검색하도록 강제하여, 두 로그가 하나로 합쳐지는 것을 방지합니다.
-                this.regex = /PROFIT\s+\[.*?\](?:(?!PROFIT)[\s\S])*?-\s*GROUP\s*:\s*(.*?)(?:\s+-\s+|[\r\n])(?:(?!PROFIT)[\s\S])*?-\s*DCA\s*:\s*(\d+)/g;
+                // 1. PROFIT 추출 정규식 (기존)
+                this.profitRegex = /PROFIT\s+\[.*?\](?:(?!PROFIT)[\s\S])*?-\s*GROUP\s*:\s*(.*?)(?:\s+-\s+|[\r\n])(?:(?!PROFIT)[\s\S])*?-\s*DCA\s*:\s*(\d+)/g;
+                
+                // 2. STOP LOSS (Backtest Report) 추출 정규식 (신규)
+                // [Backtest Report] 블록 내의 Group Name과 총 손절 회수를 찾습니다.
+                // Group Name 이후에 "총 손절 회수"가 나오기 전까지 다른 Group Name이 나오지 않도록 처리합니다.
+                this.slRegex = /Group Name\s*:\s*(.*?)(?:[\r\n]+)(?:(?!Group Name)[\s\S])*?총 손절 회수\s*:\s*(\d+)/g;
+                
                 this.buffer = "";
             }
 
             processChunk(chunk) {
                 this.buffer += chunk;
                 
+                // --- A. PROFIT 처리 ---
                 let match;
-                let lastIndex = 0;
+                let lastProfitIndex = 0;
 
-                this.regex.lastIndex = 0;
-
-                while ((match = this.regex.exec(this.buffer)) !== null) {
+                this.profitRegex.lastIndex = 0;
+                while ((match = this.profitRegex.exec(this.buffer)) !== null) {
                     const groupName = match[1].trim();
                     const dcaStep = parseInt(match[2]);
 
@@ -615,19 +624,48 @@
                     currentTotalProfitCount++;
                     currentTotalDcaSum += dcaStep;
 
-                    lastIndex = this.regex.lastIndex;
+                    lastProfitIndex = this.profitRegex.lastIndex;
                 }
 
+                // --- B. STOP LOSS 처리 ---
+                let slMatch;
+                let lastSlIndex = 0;
+                
+                this.slRegex.lastIndex = 0;
+                while ((slMatch = this.slRegex.exec(this.buffer)) !== null) {
+                    const groupName = slMatch[1].trim();
+                    const slCount = parseInt(slMatch[2]);
+
+                    // 손절 횟수 누적
+                    if (!mergedStopLossMap[groupName]) {
+                        mergedStopLossMap[groupName] = 0;
+                    }
+                    // 로그 파일 내 보고서가 누적값이 아닌 개별 보고서일 경우를 가정하여 값을 더함
+                    mergedStopLossMap[groupName] += slCount;
+                    currentTotalStopLossCount += slCount;
+
+                    lastSlIndex = this.slRegex.lastIndex;
+                }
+
+                // --- C. 버퍼 정리 ---
+                // 두 정규식 중 더 멀리 진행된 인덱스를 기준으로 자르되, 
+                // 아직 처리되지 않은 패턴이 잘리지 않도록 주의해야 합니다.
+                // 안전을 위해, 확실히 처리된 부분(최댓값)까지 자르되, 
+                // 만약 한쪽 패턴이 아예 발견되지 않았다면(인덱스 0), 발견된 쪽 기준으로만 자릅니다.
+                
+                const sliceIndex = Math.max(lastProfitIndex, lastSlIndex);
+
                 // 처리된 부분 잘라내기
-                if (lastIndex > 0) {
-                    this.buffer = this.buffer.slice(lastIndex);
+                if (sliceIndex > 0) {
+                    this.buffer = this.buffer.slice(sliceIndex);
                 }
                 
                 // 비정상적으로 버퍼가 커질 경우 강제 정리 (무한 루프 방지)
                 if (this.buffer.length > 10 * 1024 * 1024) {
-                   const lastProfit = this.buffer.lastIndexOf("PROFIT");
-                   if (lastProfit > -1) {
-                       this.buffer = this.buffer.slice(lastProfit);
+                   // 임시 방편: 가장 마지막에 발견된 키워드 기준으로 자름
+                   const lastKeyword = Math.max(this.buffer.lastIndexOf("PROFIT"), this.buffer.lastIndexOf("Backtest Report"));
+                   if (lastKeyword > -1) {
+                       this.buffer = this.buffer.slice(lastKeyword);
                    } else {
                        this.buffer = ""; 
                    }
@@ -637,8 +675,10 @@
 
         function analyzeFiles() {
             mergedGroupMap = {};
+            mergedStopLossMap = {}; // 초기화
             currentMaxDCA = 0;
             currentTotalProfitCount = 0;
+            currentTotalStopLossCount = 0;
             currentTotalDcaSum = 0;
 
             const loading = document.getElementById('loading');
@@ -702,8 +742,8 @@
         function finishAnalysis() {
             document.getElementById('loading').style.display = 'none';
 
-            if (currentTotalProfitCount === 0) {
-                showError('분석할 수 있는 익절 데이터가 없습니다. 로그 파일 형식을 확인하세요.');
+            if (currentTotalProfitCount === 0 && currentTotalStopLossCount === 0) {
+                showError('분석할 데이터가 없습니다. 로그 파일 형식을 확인하세요.');
                 return;
             }
 
@@ -749,29 +789,34 @@
             const groupMap = mergedGroupMap;
             const maxDCA = currentMaxDCA;
             
-            const totalGroups = Object.keys(groupMap).length;
+            // 그룹 맵 키 + 손절 맵 키 합치기 (혹시 익절은 없고 손절만 있는 그룹이 있을 수 있으므로)
+            const allGroups = new Set([...Object.keys(groupMap), ...Object.keys(mergedStopLossMap)]);
+            const totalGroups = allGroups.size;
+            
             const avgDCA = currentTotalProfitCount > 0 
                 ? (currentTotalDcaSum / currentTotalProfitCount).toFixed(2) 
                 : 0;
 
             document.getElementById('totalTakeProfit').textContent = currentTotalProfitCount.toLocaleString();
+            document.getElementById('totalStopLoss').textContent = currentTotalStopLossCount.toLocaleString();
             document.getElementById('totalGroups').textContent = totalGroups.toLocaleString();
             document.getElementById('maxDCAStep').textContent = maxDCA;
             document.getElementById('avgDCAStep').textContent = avgDCA;
 
-            generateTable(groupMap, maxDCA);
+            generateTable(allGroups, groupMap, maxDCA);
 
             document.getElementById('resultsSection').style.display = 'block';
             document.getElementById('uploadSection').style.display = 'none';
             document.getElementById('fileList').style.display = 'none';
         }
 
-        function generateTable(groupMap, maxDCA) {
+        function generateTable(allGroupsSet, groupMap, maxDCA) {
             const thead = document.getElementById('tableHead');
             const tbody = document.getElementById('tableBody');
             thead.innerHTML = '';
             tbody.innerHTML = '';
 
+            // 헤더 생성
             const headerRow = document.createElement('tr');
             headerRow.innerHTML = '<th>그룹명</th>';
             for (let i = 0; i <= maxDCA; i++) {
@@ -779,26 +824,43 @@
                 th.textContent = `${i} DCA`;
                 headerRow.appendChild(th);
             }
+            // Total 헤더
             const thTotal = document.createElement('th');
             thTotal.textContent = 'Total';
             headerRow.appendChild(thTotal);
+
+            // [추가됨] Stop Loss 헤더
+            const thSL = document.createElement('th');
+            thSL.textContent = 'Stop Loss';
+            thSL.style.color = '#c62828'; // 붉은색 강조
+            headerRow.appendChild(thSL);
+
             thead.appendChild(headerRow);
 
             const allValues = [];
             const rows = [];
             
-            for (const group in groupMap) {
+            allGroupsSet.forEach(group => {
                 let rowTotal = 0;
                 const rowData = [];
+                // 익절 데이터 처리
                 for (let i = 0; i <= maxDCA; i++) {
-                    const value = groupMap[group][i] || 0;
+                    const value = (groupMap[group] && groupMap[group][i]) ? groupMap[group][i] : 0;
                     rowData.push(value);
                     rowTotal += value;
                     if (value > 0) allValues.push(value);
                 }
-                rows.push({ group, data: rowData, total: rowTotal });
-            }
-            rows.sort((a, b) => b.total - a.total);
+                // 손절 데이터 가져오기
+                const stopLossCount = mergedStopLossMap[group] || 0;
+
+                rows.push({ group, data: rowData, total: rowTotal, stopLoss: stopLossCount });
+            });
+            
+            // 정렬: 익절 합계 내림차순 (동일하면 손절 내림차순)
+            rows.sort((a, b) => {
+                if (b.total !== a.total) return b.total - a.total;
+                return b.stopLoss - a.stopLoss;
+            });
 
             const minVal = allValues.length > 0 ? Math.min(...allValues) : 0;
             const maxVal = allValues.length > 0 ? Math.max(...allValues) : 0;
@@ -825,11 +887,21 @@
                     tr.appendChild(td);
                 });
 
+                // Total (익절 합계)
                 const tdTotal = document.createElement('td');
                 tdTotal.style.fontWeight = '700';
                 tdTotal.style.backgroundColor = '#f0f0f0';
                 tdTotal.textContent = row.total;
                 tr.appendChild(tdTotal);
+
+                // [추가됨] Stop Loss (손절 합계)
+                const tdSL = document.createElement('td');
+                tdSL.style.fontWeight = '700';
+                tdSL.style.backgroundColor = '#fff0f0'; // 연한 붉은 배경
+                tdSL.style.color = '#c62828'; // 붉은 글씨
+                tdSL.textContent = row.stopLoss > 0 ? row.stopLoss : '-';
+                tr.appendChild(tdSL);
+
                 fragment.appendChild(tr);
             });
 
@@ -837,7 +909,7 @@
         }
 
         async function exportToExcel() {
-            if (Object.keys(mergedGroupMap).length === 0) {
+            if (Object.keys(mergedGroupMap).length === 0 && Object.keys(mergedStopLossMap).length === 0) {
                 showError('내보낼 데이터가 없습니다.');
                 return;
             }
@@ -846,11 +918,13 @@
                 const workbook = new ExcelJS.Workbook();
                 const worksheet = workbook.addWorksheet('DCA Summary');
 
+                // 헤더 구성
                 const headers = ['그룹명'];
                 for (let i = 0; i <= currentMaxDCA; i++) {
                     headers.push(`${i} DCA`);
                 }
                 headers.push('Total');
+                headers.push('Stop Loss'); // [추가됨]
 
                 const headerRow = worksheet.addRow(headers);
                 headerRow.eachCell((cell) => {
@@ -862,27 +936,40 @@
                         bottom: { style: 'thin' }, right: { style: 'thin' }
                     };
                 });
+                
+                // 손절 헤더 특별 색상
+                const slHeaderCell = headerRow.getCell(headers.length);
+                slHeaderCell.font = { bold: true, color: { argb: 'FFFF0000' } }; // 빨간 텍스트
 
+                // 데이터 준비
+                const allGroups = new Set([...Object.keys(mergedGroupMap), ...Object.keys(mergedStopLossMap)]);
                 const allValues = [];
                 const rows = [];
-                for (const group in mergedGroupMap) {
+                
+                allGroups.forEach(group => {
                     let rowTotal = 0;
                     const rowData = [];
                     for (let i = 0; i <= currentMaxDCA; i++) {
-                        const value = mergedGroupMap[group][i] || 0;
+                        const value = (mergedGroupMap[group] && mergedGroupMap[group][i]) ? mergedGroupMap[group][i] : 0;
                         rowData.push(value);
                         rowTotal += value;
                         if (value > 0) allValues.push(value);
                     }
-                    rows.push({ group, data: rowData, total: rowTotal });
-                }
-                rows.sort((a, b) => b.total - a.total);
+                    const stopLoss = mergedStopLossMap[group] || 0;
+                    rows.push({ group, data: rowData, total: rowTotal, stopLoss: stopLoss });
+                });
+                
+                rows.sort((a, b) => {
+                    if (b.total !== a.total) return b.total - a.total;
+                    return b.stopLoss - a.stopLoss;
+                });
 
                 const minVal = allValues.length > 0 ? Math.min(...allValues) : 0;
                 const maxVal = allValues.length > 0 ? Math.max(...allValues) : 0;
 
                 rows.forEach(rowData => {
-                    const rowValues = [rowData.group || "(알 수 없음)", ...rowData.data, rowData.total];
+                    // [추가됨] Stop Loss 데이터 추가
+                    const rowValues = [rowData.group || "(알 수 없음)", ...rowData.data, rowData.total, rowData.stopLoss];
                     const row = worksheet.addRow(rowValues);
 
                     row.eachCell((cell, colNumber) => {
@@ -892,12 +979,14 @@
                         };
                         cell.alignment = { vertical: 'middle', horizontal: 'center' };
 
+                        // 그룹명
                         if (colNumber === 1) {
                             cell.font = { bold: true };
                             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9F9F9' } };
                             cell.alignment = { vertical: 'middle', horizontal: 'left' };
                         } 
-                        else if (colNumber > 1 && colNumber <= headers.length - 1) {
+                        // DCA 컬럼들
+                        else if (colNumber > 1 && colNumber <= headers.length - 2) {
                             const val = cell.value;
                             if (val > 0) {
                                 const color = getCommonColor(val, minVal, maxVal);
@@ -908,9 +997,16 @@
                                 cell.font = { color: { argb: 'FFCCCCCC' } };
                             }
                         }
-                        else if (colNumber === headers.length) {
+                        // Total 컬럼
+                        else if (colNumber === headers.length - 1) {
                             cell.font = { bold: true };
                             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0F0' } };
+                        }
+                        // Stop Loss 컬럼
+                        else if (colNumber === headers.length) {
+                             cell.font = { bold: true, color: { argb: 'FFC62828' } };
+                             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF0F0' } };
+                             if (cell.value === 0) cell.value = '-';
                         }
                     });
                 });
